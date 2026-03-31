@@ -1,0 +1,21 @@
+# 생성된 PDF 출력물
+output/
+
+# Python 캐시
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 편집기 임시 파일
+*.tmp.*
+*.tmp
+cd
+
+# 환경 설정
+.env
+*.env
+
+# OS
+.DS_Store
+Thumbs.db

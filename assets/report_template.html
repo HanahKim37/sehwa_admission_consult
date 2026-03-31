@@ -1,0 +1,77 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<style>
+body { font-family: Helvetica, Arial, sans-serif; color:#111827; margin:24px; }
+h1 { font-size: 24px; margin-bottom: 8px; }
+.section { border:1px solid #E5E7EB; border-radius:14px; padding:14px; margin-bottom:12px; }
+.grid { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+.small { color:#6B7280; font-size:12px; }
+table { width:100%; border-collapse:collapse; font-size:12px; }
+th, td { border:1px solid #E5E7EB; padding:6px; text-align:left; }
+.footer { margin-top:20px; font-size:11px; color:#4B5563; }
+</style>
+</head>
+<body>
+<h1>고2 진학 상담 분석 보고서</h1>
+<div class="small">학번 {{ student.student_id }} | 이름 {{ student.name }} | 계열 {{ student.track }}</div>
+
+<div class="grid">
+  <div class="section">
+    <h3>현재 성적 요약</h3>
+    <table>
+      <tr><th>전교과</th><td>{{ student.overall_grade }}</td></tr>
+      <tr><th>국수영</th><td>{{ student.ksy_grade }}</td></tr>
+      <tr><th>국어</th><td>{{ student.kor_grade }}</td></tr>
+      <tr><th>수학</th><td>{{ student.math_grade }}</td></tr>
+      <tr><th>영어</th><td>{{ student.eng_grade }}</td></tr>
+      <tr><th>모의 국어 백분위</th><td>{{ student.mock_kor_percentile }}</td></tr>
+      <tr><th>모의 수학 백분위</th><td>{{ student.mock_math_percentile }}</td></tr>
+      <tr><th>모의 종합 백분위</th><td>{{ student.mock_combined_percentile }}</td></tr>
+    </table>
+  </div>
+
+  <div class="section">
+    <h3>전형 적합도</h3>
+    <table>
+      {% for row in fit_scores %}
+      <tr><th>{{ row.name }}</th><td>{{ row.score }}</td></tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+
+<div class="section">
+  <h3>유사 사례</h3>
+  <table>
+    <thead>
+      <tr><th>사례</th><th>유사도</th><th>수시 요약</th><th>정시 요약</th></tr>
+    </thead>
+    <tbody>
+      {% for row in similar_cases %}
+      <tr>
+        <td>{{ row.case_code }}</td>
+        <td>{{ row.total_similarity }}</td>
+        <td>{{ row.susi_summary }}</td>
+        <td>{{ row.jungsi_summary }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+<div class="section">
+  <h3>상담 의견</h3>
+  <p>{{ strength }}</p>
+  <p>{{ weakness }}</p>
+  <p>{{ strategy }}</p>
+</div>
+
+<div class="footer">
+  {% for line in disclaimer_lines %}
+  <div>{{ line }}</div>
+  {% endfor %}
+</div>
+</body>
+</html>
