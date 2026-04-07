@@ -5,6 +5,23 @@ import streamlit as st
 from modules.validator import build_validation_report
 
 st.set_page_config(page_title="추출결과 확인수정", page_icon="✏️", layout="wide")
+st.markdown("""
+<style>
+/* 드롭다운 선택값 텍스트 선명하게 */
+div[data-baseweb="select"] div[class*="singleValue"] {
+    color: rgb(49, 51, 63) !important;
+    opacity: 1 !important;
+}
+div[data-baseweb="select"] span[class*="placeholder"] {
+    color: rgb(49, 51, 63) !important;
+    opacity: 1 !important;
+}
+/* 다크 모드 대응 */
+[data-theme="dark"] div[data-baseweb="select"] div[class*="singleValue"] {
+    color: rgb(250, 250, 250) !important;
+}
+</style>
+""", unsafe_allow_html=True)
 st.title("✏️ 추출결과 확인수정")
 
 students = st.session_state.get("extracted_students", [])
@@ -79,8 +96,10 @@ mock_column_config = {
     "eng_rank": st.column_config.NumberColumn("영어 석차", step=1),
     "eng_grade": st.column_config.NumberColumn("영어 등급"),
     "soc_score": st.column_config.NumberColumn("통합사회 원점수"),
+    "soc_percentile": st.column_config.NumberColumn("통합사회 백분위"),
     "soc_grade": st.column_config.NumberColumn("통합사회 등급"),
     "sci_score": st.column_config.NumberColumn("통합과학 원점수"),
+    "sci_percentile": st.column_config.NumberColumn("통합과학 백분위"),
     "sci_grade": st.column_config.NumberColumn("통합과학 등급"),
     "history_score": st.column_config.NumberColumn("한국사 원점수"),
     "history_grade": st.column_config.NumberColumn("한국사 등급"),
@@ -105,6 +124,12 @@ student["grade_records"] = grade_df.to_dict(orient="records")
 
 st.subheader("전국연합학력평가")
 mock_df = pd.DataFrame(student.get("mock_records", []))
+for _col in ["soc_percentile", "sci_percentile"]:
+    if _col not in mock_df.columns:
+        mock_df[_col] = None
+_mock_cols = list(mock_column_config.keys())
+_extra_cols = [c for c in mock_df.columns if c not in _mock_cols]
+mock_df = mock_df.reindex(columns=_mock_cols + _extra_cols)
 mock_df = st.data_editor(
     mock_df,
     use_container_width=True,

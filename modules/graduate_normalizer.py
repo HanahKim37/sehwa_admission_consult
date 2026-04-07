@@ -20,6 +20,21 @@ def _clean_id(v):
     return s
 
 
+def _clean_str_col(series: pd.Series) -> pd.Series:
+    """
+    엑셀 셀 줄바꿈 잔재 제거:
+    - openpyxl이 \\r (0x0D)을 그대로 반환하는 경우
+    - 일부 버전에서 리터럴 '_x000D_' 문자열로 반환하는 경우
+    둘 다 공백으로 치환 후 strip.
+    """
+    return (
+        series.astype(str)
+        .str.replace("_x000D_", " ", regex=False)
+        .str.replace("\r", " ", regex=False)
+        .str.strip()
+    )
+
+
 def _fill_multiindex_ffill(df: pd.DataFrame) -> pd.DataFrame:
     """
     다중 헤더 시트에서 병합 셀로 인해 NaN이 된 상위 레벨을 ffill 처리.
@@ -314,6 +329,17 @@ def normalize_mock_sheet(df: pd.DataFrame) -> pd.DataFrame:
         _find_col_contains(data, ["국수탐2", "백분위합"])
         or _find_col_contains(data, ["백분위합"])
     )
+    # 국수탐2 백분석차 (헤더명으로 동적 탐색, 열 위치에 의존하지 않음)
+    combined_rank_col = (
+        _find_col_contains(data, ["국수탐2", "백분석차"])
+        or _find_col_contains(data, ["백분석차"])
+    )
+    # 총원 (교내 석차 비율 계산용)
+    total_students_col = (
+        _find_col_contains(data, ["총원"])
+        or _find_col_contains(data, ["전체인원"])
+        or _find_col_contains(data, ["인원수"])
+    )
 
     # 숫자형 컬럼
     numeric_mapping = {
@@ -326,6 +352,8 @@ def normalize_mock_sheet(df: pd.DataFrame) -> pd.DataFrame:
         "mock_soc_percentile":  tanku1_pct_col,
         "mock_sci_percentile":  tanku2_pct_col,
         "mock_ks_percentile":   combined_pct_col,
+        "mock_ks_rank":         combined_rank_col,
+        "mock_total_students":  total_students_col,
     }
     for out_col, src_col in numeric_mapping.items():
         out[out_col] = _safe_numeric(data[src_col]) if src_col else np.nan
@@ -373,6 +401,12 @@ def normalize_susi_sheet(df: pd.DataFrame) -> pd.DataFrame:
     data = data.rename(columns=rename_map)
     if "student_id" in data.columns:
         data["student_id"] = data["student_id"].apply(_clean_id)
+    # 엑셀 셀 내 줄바꿈(\r 및 _x000D_) 제거
+    for col in ["admission_name", "admission_method", "minimum_requirement",
+                "college", "department", "track_text", "first_result",
+                "final_result", "registered", "admission_group"]:
+        if col in data.columns:
+            data[col] = _clean_str_col(data[col])
     return data
 
 
@@ -397,6 +431,12 @@ def normalize_jungsi_sheet(df: pd.DataFrame) -> pd.DataFrame:
     data = data.rename(columns=rename_map)
     if "student_id" in data.columns:
         data["student_id"] = data["student_id"].apply(_clean_id)
+    # 엑셀 셀 내 줄바꿈(\r 및 _x000D_) 제거
+    for col in ["admission_name", "admission_method", "minimum_requirement",
+                "college", "department", "track_text", "first_result",
+                "final_result", "registered", "admission_group", "gun"]:
+        if col in data.columns:
+            data[col] = _clean_str_col(data[col])
     return data
 
 

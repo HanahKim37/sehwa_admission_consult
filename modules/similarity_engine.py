@@ -152,21 +152,73 @@ def calculate_grade_similarity(current: dict, graduates: pd.DataFrame) -> pd.Dat
 
 
 def calculate_mock_similarity(current: dict, graduates: pd.DataFrame) -> pd.DataFrame:
+    """
+    모의 유사도 계산.
+
+    비교 우선순위:
+    1) 현재 학생의 국수탐 4과목 백분위합(mock_ks_pct_sum)이 있으면
+       → 졸업생의 국수탐2 백분위합(mock_ks_percentile)과 비교 (같은 스케일)
+    2) 없으면 국어·수학 개별 백분위 직접 비교
+    ※ 현재 학생의 PDF 단일 ks_percentile은 졸업생 백분위합과 스케일이 다르므로 절대 직접 비교 금지
+    """
     if graduates.empty:
         return pd.DataFrame()
 
-    mock_items = [
-        ("mock_kor_percentile", "mock_kor_percentile", 1.2, 0.20),
-        ("mock_math_percentile", "mock_math_percentile", 1.2, 0.24),
-        ("mock_eng_grade", "mock_eng_grade", 18, 0.12),
-        ("mock_soc_grade", "mock_soc_grade", 18, 0.08),
-        ("mock_sci_grade", "mock_sci_grade", 18, 0.08),
-        ("mock_ks_percentile", "mock_ks_percentile", 1.0, 0.28),
-    ]
+    # 교내 상대위치(mock_ks_pos): 졸업생 집단 범위로 정규화
+    ks_pos_range: tuple | None = None
+    if "mock_ks_pos" in graduates.columns:
+        vals = pd.to_numeric(graduates["mock_ks_pos"], errors="coerce").dropna()
+        if len(vals) >= 2:
+            ks_pos_range = (float(vals.min()), float(vals.max()))
+
+    # 현재 학생 4과목 백분위합 유무 확인
+    cur_pct_sum = _num(current.get("mock_ks_pct_sum"))
+    has_pct_sum = not pd.isna(cur_pct_sum)
+
+    if has_pct_sum:
+        # ── 케이스 1: 4과목 백분위합 기준 ──────────────────────────────────
+        # scale=0.30: 합산 차이 100점 ≈ 개별 25점 차이와 동등한 감점
+        mock_items = [
+            ("mock_ks_pct_sum",     "mock_ks_percentile",  0.30, 0.36),
+            ("mock_kor_percentile", "mock_kor_percentile", 1.2,  0.14),
+            ("mock_math_percentile","mock_math_percentile",1.2,  0.14),
+            ("mock_eng_grade",      "mock_eng_grade",       18,   0.10),
+            ("mock_soc_grade",      "mock_soc_grade",       18,   0.07),
+            ("mock_sci_grade",      "mock_sci_grade",       18,   0.07),
+        ]
+    else:
+        # ── 케이스 2: 국수 개별 백분위 기준 ─────────────────────────────────
+        # mock_ks_percentile(단일) vs mock_ks_percentile(합산) 비교 금지
+        mock_items = [
+            ("mock_kor_percentile", "mock_kor_percentile", 1.2, 0.26),
+            ("mock_math_percentile","mock_math_percentile",1.2, 0.30),
+            ("mock_eng_grade",      "mock_eng_grade",       18,  0.14),
+            ("mock_soc_grade",      "mock_soc_grade",       18,  0.10),
+            ("mock_sci_grade",      "mock_sci_grade",       18,  0.08),
+        ]
 
     rows = []
     for _, row in graduates.iterrows():
         score, confidence, details = _weighted_similarity(current, row, mock_items)
+
+        # ── 교내 상대위치 보정 (백분석차 기반) ──────────────────────────────
+        cur_pos  = _num(current.get("mock_ks_pos"))
+        grad_pos = _num(row.get("mock_ks_pos"))
+        if ks_pos_range and not pd.isna(cur_pos) and not pd.isna(grad_pos):
+            cur_norm  = _pop_normalize(cur_pos,  *ks_pos_range)
+            grad_norm = _pop_normalize(grad_pos, *ks_pos_range)
+            part = _score_distance(cur_norm, grad_norm, 1.0)
+            if not pd.isna(part):
+                pos_weight = 0.12
+                score      = round((score * confidence + part * pos_weight) / (confidence + pos_weight), 2)
+                confidence = round(confidence + pos_weight, 2)
+                details.append({
+                    "항목": "mock_ks_pos (교내위치)",
+                    "현재값":   round(cur_norm, 1),
+                    "졸업생값": round(grad_norm, 1),
+                    "부분점수": round(part, 2),
+                    "가중치":   pos_weight,
+                })
 
         if confidence > 0:
             if current.get("mock_trend") == "상승":
@@ -176,16 +228,14 @@ def calculate_mock_similarity(current: dict, graduates: pd.DataFrame) -> pd.Data
 
         score = round(min(score, 100), 2)
 
-        rows.append(
-            {
-                "student_id": row.get("student_id"),
-                "name": row.get("name"),
-                "track": row.get("track"),
-                "mock_similarity": score,
-                "mock_confidence": confidence,
-                "mock_detail": details,
-            }
-        )
+        rows.append({
+            "student_id":      row.get("student_id"),
+            "name":            row.get("name"),
+            "track":           row.get("track"),
+            "mock_similarity": score,
+            "mock_confidence": confidence,
+            "mock_detail":     details,
+        })
 
     df = pd.DataFrame(rows)
     df["sort_key"] = np.where(df["mock_confidence"] > 0, 1, 0)

@@ -334,10 +334,12 @@ def build_current_student_features(
         mapping = {
             "kor_percentile":  "mock_kor_percentile",
             "math_percentile": "mock_math_percentile",
+            "soc_percentile":  "mock_soc_percentile",   # 통합사회 백분위 (수동 입력)
+            "sci_percentile":  "mock_sci_percentile",   # 통합과학 백분위 (수동 입력)
             "eng_grade":       "mock_eng_grade",
             "soc_grade":       "mock_soc_grade",
             "sci_grade":       "mock_sci_grade",
-            "ks_percentile":   "mock_ks_percentile",
+            "ks_percentile":   "mock_ks_percentile",    # PDF 국수 단일 백분위 (표시용만)
             "ks_score":        "mock_ks_score",
             "ks_rank":         "mock_ks_rank",
             "total_rank":      "mock_total_rank",
@@ -350,21 +352,46 @@ def build_current_student_features(
             else:
                 feature[out_key] = None
 
+        # 국수탐 4과목 백분위합: 4과목 모두 있을 때만 계산 (졸업생 mock_ks_percentile과 비교용)
+        _k  = feature.get("mock_kor_percentile")
+        _m  = feature.get("mock_math_percentile")
+        _s  = feature.get("mock_soc_percentile")
+        _sc = feature.get("mock_sci_percentile")
+        import math as _math_mod
+        def _valid(v):
+            return v is not None and not (isinstance(v, float) and _math_mod.isnan(v))
+        if _valid(_k) and _valid(_m) and _valid(_s) and _valid(_sc):
+            feature["mock_ks_pct_sum"] = round(float(_k) + float(_m) + float(_s) + float(_sc), 2)
+        else:
+            feature["mock_ks_pct_sum"] = None
+
         valid_mock_all = mock_df_all[mock_df_all["has_score"]].copy()
         feature["mock_trend"] = calc_trend(valid_mock_all["ks_percentile"].tolist()) if "ks_percentile" in valid_mock_all.columns else "판단불가"
+
+        # 교내 상대 위치: 회차별 (석차/총원) 위치를 평균
+        _pos_vals = []
+        for _, _mr in mock_df.iterrows():
+            _p = calc_relative_position(_mr.get("ks_rank"), _mr.get("total_students"))
+            if _p is not None:
+                _pos_vals.append(_p)
+        feature["mock_ks_pos"] = round(sum(_pos_vals) / len(_pos_vals) * 100, 2) if _pos_vals else None
     else:
         feature["latest_mock_year"] = None
         feature["latest_mock_month"] = None
         feature["mock_kor_percentile"]  = None
         feature["mock_math_percentile"] = None
+        feature["mock_soc_percentile"]  = None
+        feature["mock_sci_percentile"]  = None
         feature["mock_eng_grade"]        = None
         feature["mock_soc_grade"]        = None
         feature["mock_sci_grade"]        = None
         feature["mock_ks_percentile"]   = None
+        feature["mock_ks_pct_sum"]      = None
         feature["mock_ks_score"]        = None
         feature["mock_ks_rank"]         = None
         feature["mock_total_rank"]      = None
         feature["mock_total_students"]  = None
+        feature["mock_ks_pos"]          = None
         feature["mock_trend"] = "판단불가"
 
     return feature
@@ -466,6 +493,8 @@ def build_graduate_features(db):
                 "mock_soc_grade",
                 "mock_sci_grade",
                 "mock_ks_percentile",
+                "mock_ks_rank",
+                "mock_total_students",
             ]
             if c in mock_df.columns
         ]
@@ -474,9 +503,21 @@ def build_graduate_features(db):
             numeric_mock = mock_df[["student_id"] + mock_target_cols].copy()
             for col in mock_target_cols:
                 numeric_mock[col] = pd.to_numeric(numeric_mock[col], errors="coerce")
-            # 학생별 평균 (시험 회차 전체)
+
+            # 교내 상대 위치: 행 단위로 계산 후 평균 (총원이 연도별로 다를 수 있으므로)
+            if "mock_ks_rank" in numeric_mock.columns and "mock_total_students" in numeric_mock.columns:
+                def _row_ks_pos(row):
+                    p = calc_relative_position(row.get("mock_ks_rank"), row.get("mock_total_students"))
+                    return round(p * 100, 2) if p is not None else float("nan")
+                numeric_mock["mock_ks_pos"] = numeric_mock.apply(_row_ks_pos, axis=1)
+
+            # 학생별 평균 (시험 회차 전체) - 석차/총원 원본은 집계 제외, 위치값만 사용
+            agg_cols = [c for c in mock_target_cols if c not in ("mock_ks_rank", "mock_total_students")]
+            if "mock_ks_pos" in numeric_mock.columns:
+                agg_cols.append("mock_ks_pos")
+
             mock_agg = (
-                numeric_mock.groupby("student_id")[mock_target_cols]
+                numeric_mock.groupby("student_id")[agg_cols]
                 .mean()
                 .reset_index()
             )

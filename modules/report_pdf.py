@@ -460,19 +460,23 @@ def build_report_context(
     passing_susi: list[dict] | None = None,
     passing_jungsi: list[dict] | None = None,
     counseling_data: dict | None = None,
+    grade_similar_cases: list[dict] | None = None,
+    mock_similar_cases: list[dict] | None = None,
 ) -> dict:
     return {
-        "student":          student,
-        "similar_cases":    similar_cases,
-        "fit_scores":       fit_result.get("scores", []),
-        "strength":         strength,
-        "weakness":         weakness,
-        "strategy":         strategy,
-        "disclaimer_lines": disclaimer_lines,
-        "pinned_entries":   pinned_entries  or [],
-        "passing_susi":     passing_susi   or [],
-        "passing_jungsi":   passing_jungsi or [],
-        "counseling_data":  counseling_data or {},
+        "student":              student,
+        "similar_cases":        similar_cases,
+        "grade_similar_cases":  grade_similar_cases or [],
+        "mock_similar_cases":   mock_similar_cases  or [],
+        "fit_scores":           fit_result.get("scores", []),
+        "strength":             strength,
+        "weakness":             weakness,
+        "strategy":             strategy,
+        "disclaimer_lines":     disclaimer_lines,
+        "pinned_entries":       pinned_entries  or [],
+        "passing_susi":         passing_susi   or [],
+        "passing_jungsi":       passing_jungsi or [],
+        "counseling_data":      counseling_data or {},
     }
 
 
@@ -509,63 +513,81 @@ def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict])
     sorted_codes = sorted(case_map,
                           key=lambda c: cat_order.get(case_map[c]["cat"], 9))
 
-    CAT_STYLE = {
-        "안정권": ("td_g", CGG),
-        "적정권": ("td_b", CBG),
-        "참고":   ("td_c", CLG),
+    # 카테고리별 그룹 분리: 안정권 / 적정권 / 참고
+    CAT_LABEL = {"안정권": "안정권", "적정권": "적정권", "참고": "참고"}
+    CAT_HDR_BG = {
+        "안정권": colors.HexColor("#A7F3D0"),  # 연초록
+        "적정권": colors.HexColor("#BFDBFE"),  # 연파랑
+        "참고":   colors.HexColor("#E2E8F0"),  # 연회색
     }
 
-    # 테이블 구성
-    tbl_rows = [[
-        _p("사례코드",           "th"),
-        _p("전교과\n(등급)",     "th_c"),
-        _p("국수영\n(등급)",     "th_c"),
-        _p("모의종합\n(백분위)", "th_c"),
-        _p("수시 합격",          "th"),
-        _p("정시 합격",          "th"),
-    ]]
-    row_bgs: list = []
+    def _make_cat_table(codes_for_cat: list) -> Table | None:
+        if not codes_for_cat:
+            return None
+        HDR = [
+            _p("사례코드",           "th"),
+            _p("전교과\n(등급)",     "th_c"),
+            _p("국수영\n(등급)",     "th_c"),
+            _p("모의종합\n(백분위)", "th_c"),
+            _p("수시 합격",          "th"),
+            _p("정시 합격",          "th"),
+        ]
+        rows = [HDR]
+        bgs: list = []
+        for i, code in enumerate(codes_for_cat):
+            info  = case_map[code]
+            grade = info["grades"]
+            row_bg = CLG if i % 2 == 0 else CW
+            susi_txt = "<br/>".join(
+                f"{r.get('college','-')}" +
+                (f" / {r.get('department','')}" if r.get('department') else "") +
+                (f" [{r.get('admission_name','')}]" if r.get('admission_name') else "")
+                for r in info["susi"]
+            ) or "-"
+            jungsi_txt = "<br/>".join(
+                f"{r.get('college','-')}" +
+                (f" / {r.get('department','')}" if r.get('department') else "") +
+                (f" ({r.get('gun','')}군)" if r.get('gun') else "")
+                for r in info["jungsi"]
+            ) or "-"
+            rows.append([
+                _p(code,                                            "body_b"),
+                _p(_g(grade.get("all_grade")),                     "td_c"),
+                _p(_g(grade.get("ksy_grade")),                     "td_c"),
+                _p(_pct_short(grade.get("mock_ks_percentile")),    "td_c"),
+                _p(susi_txt,   "td"),
+                _p(jungsi_txt, "td"),
+            ])
+            bgs.append(("BACKGROUND", (0, i+1), (-1, i+1), row_bg))
+        rest = (_CW - 194) / 2
+        tbl = Table(rows, colWidths=[50, 50, 50, 44, rest, rest])
+        cat_hdr_bg = CAT_HDR_BG.get(case_map[codes_for_cat[0]]["cat"], colors.HexColor("#6EE7B7"))
+        sty = _tbl_style(header_bg=cat_hdr_bg)
+        for cmd in bgs:
+            sty.add(*cmd)
+        tbl.setStyle(sty)
+        return tbl
 
-    for i, code in enumerate(sorted_codes):
-        info  = case_map[code]
-        cat   = info["cat"]
-        grade = info["grades"]
-        _, row_bg = CAT_STYLE.get(cat, ("td_c", CLG))
-        if i % 2 == 1:
-            row_bg = CW
+    # 카테고리별 코드 묶음
+    cat_groups: dict[str, list] = {}
+    for code in sorted_codes:
+        cat = case_map[code]["cat"]
+        cat_groups.setdefault(cat, []).append(code)
 
-        susi_txt = "<br/>".join(
-            f"{r.get('college','-')}" +
-            (f" / {r.get('department','')}" if r.get('department') else "") +
-            (f" [{r.get('admission_name','')}]" if r.get('admission_name') else "")
-            for r in info["susi"]
-        ) or "-"
-        jungsi_txt = "<br/>".join(
-            f"{r.get('college','-')}" +
-            (f" / {r.get('department','')}" if r.get('department') else "") +
-            (f" ({r.get('gun','')}군)" if r.get('gun') else "")
-            for r in info["jungsi"]
-        ) or "-"
+    blocks: list = [*_sec("합격 안정권 분석", line_color=CG), Spacer(1, 4)]
+    for cat in ["안정권", "적정권", "참고"]:
+        codes_in_cat = cat_groups.get(cat, [])
+        if not codes_in_cat:
+            continue
+        blocks.append(_p(f"▶ {CAT_LABEL[cat]}", "body_b"))
+        blocks.append(Spacer(1, 3))
+        tbl = _make_cat_table(codes_in_cat)
+        if tbl:
+            blocks.append(tbl)
+        blocks.append(Spacer(1, 8))
+    blocks.append(Spacer(1, 4))
 
-        tbl_rows.append([
-            _p(code,                          "body_b"),
-            _p(_g(grade.get("all_grade")),    "td_c"),
-            _p(_g(grade.get("ksy_grade")),    "td_c"),
-            _p(_pct_short(grade.get("mock_ks_percentile")), "td_c"),
-            _p(susi_txt,   "td"),
-            _p(jungsi_txt, "td"),
-        ])
-        row_bgs.append(("BACKGROUND", (0, i+1), (-1, i+1), row_bg))
-
-    rest = (_CW - 194) / 2   # 수시/정시 열 (50+50+50+44=194)
-    tbl = Table(tbl_rows, colWidths=[50, 50, 50, 44, rest, rest])
-    sty = _tbl_style(header_bg=colors.HexColor("#6EE7B7"))
-    for cmd in row_bgs:
-        sty.add(*cmd)
-    tbl.setStyle(sty)
-
-    return [*_sec("합격 안정권 분석", line_color=CG), Spacer(1, 4),
-            tbl, Spacer(1, 10)]
+    return blocks
 
 
 # ── 대학역추적 섹션 ──────────────────────────────────────────────────────
@@ -577,12 +599,23 @@ def _build_pinned_section(pinned: list[dict]) -> list:
     HALF = _CW / 2
 
     for pe in pinned:
-        title = str(pe.get("title", "-"))
-        pc    = int(pe.get("pass_count", 0) or 0)
-        fc    = int(pe.get("fail_count", 0) or 0)
+        pc = int(pe.get("pass_count", 0) or 0)
+        fc = int(pe.get("fail_count", 0) or 0)
+
+        # 대학명 / 모집단위 / 전형명 명시적 표시
+        colleges_raw  = pe.get("colleges", [])
+        dept_raw      = pe.get("department", "") or ""
+        adm_name_raw  = pe.get("admission_name", "") or ""
+        colleges_str  = " · ".join(str(c) for c in colleges_raw) if colleges_raw else (pe.get("title", "-") or "-")
+        info_parts    = []
+        if dept_raw:
+            info_parts.append(f"모집단위: {dept_raw}")
+        if adm_name_raw:
+            info_parts.append(f"전형명: {adm_name_raw}")
+        info_str = "  |  ".join(info_parts) if info_parts else ""
 
         pin_hdr = Table(
-            [[_p(title, "body_b"),
+            [[_p(colleges_str, "body_b"),
               _p(f"합격 {pc}명  /  불합격 {fc}명  /  총 {pc+fc}명", "small")]],
             colWidths=[_CW * 0.62, _CW * 0.38],
         )
@@ -594,6 +627,20 @@ def _build_pinned_section(pinned: list[dict]) -> list:
             ("BOTTOMPADDING", (0, 0), (-1, -1),  6),
             ("VALIGN",        (0, 0), (-1, -1), "MIDDLE"),
         ]))
+        # 모집단위·전형명 서브헤더 (있을 때만)
+        if info_str:
+            pin_sub = Table(
+                [[_p(info_str, "small")]],
+                colWidths=[_CW],
+            )
+            pin_sub.setStyle(TableStyle([
+                ("BACKGROUND",    (0, 0), (-1, -1), colors.HexColor("#FFF7ED")),
+                ("LEFTPADDING",   (0, 0), (-1, -1), 10),
+                ("TOPPADDING",    (0, 0), (-1, -1),  3),
+                ("BOTTOMPADDING", (0, 0), (-1, -1),  4),
+                ("LINEBEFORE",    (0, 0), (0, 0),    3, CA),
+                ("BOX",           (0, 0), (-1, -1),  0.5, CBR),
+            ]))
 
         def _stat_rows(prefix: str, count: int) -> list:
             rows: list = []
@@ -662,7 +709,11 @@ def _build_pinned_section(pinned: list[dict]) -> list:
             ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
             ("VALIGN",        (0, 0), (-1, -1), "TOP"),
         ]))
-        blocks.append(KeepTogether([pin_hdr, Spacer(1, 3), side, Spacer(1, 8)]))
+        hdr_items = [pin_hdr]
+        if info_str:
+            hdr_items += [pin_sub]
+        hdr_items += [Spacer(1, 3), side, Spacer(1, 8)]
+        blocks.append(KeepTogether(hdr_items))
 
     return blocks
 
@@ -765,38 +816,54 @@ def export_pdf(context: dict, output_path: str | None = None) -> str:
     ]))
 
     # ══════════════════════════════════════════════════
-    # 2. 유사 사례 — 수시/정시 요약 + 왜 뽑았는지
+    # 2. 유사 사례 — 내신 유사도 순 / 모의 유사도 순
     # ══════════════════════════════════════════════════
-    sim_cases = context.get("similar_cases", [])
-    if sim_cases:
-        story.extend(_sec("유사 사례", line_color=CB))
-        story.append(Spacer(1, 4))
-
-        sim_rows = [[
-            _p("사례코드",     "th"),
+    def _sim_table(cases: list, header_color) -> list:
+        """유사사례 리스트 → ReportLab 요소 반환."""
+        if not cases:
+            return []
+        rows = [[
+            _p("사례코드",      "th"),
             _p("수시 결과 요약", "th"),
             _p("정시 결과 요약", "th"),
             _p("유사 선택 이유",  "th"),
         ]]
-        sim_alt: list = []
-        for i, row in enumerate(sim_cases[:8]):
+        alt: list = []
+        for i, row in enumerate(cases[:8]):
             bg = CLG if i % 2 == 0 else CW
-            sim_rows.append([
+            rows.append([
                 _p(str(row.get("case_code",         "-") or "-"), "td"),
                 _p(_bold_passing(str(row.get("susi_summary",   "-") or "-")), "td"),
                 _p(_bold_passing(str(row.get("jungsi_summary", "-") or "-")), "td"),
                 _p(str(row.get("similarity_reason", "-") or "-"), "small"),
             ])
-            sim_alt.append(("BACKGROUND", (0, i+1), (-1, i+1), bg))
-
+            alt.append(("BACKGROUND", (0, i+1), (-1, i+1), bg))
         rest3 = (_CW - 52) / 3
-        sim_tbl = Table(sim_rows, colWidths=[52, rest3, rest3, rest3])
-        sty = _tbl_style(header_bg=colors.HexColor("#BFDBFE"))
-        for cmd in sim_alt:
+        tbl = Table(rows, colWidths=[52, rest3, rest3, rest3])
+        sty = _tbl_style(header_bg=header_color)
+        for cmd in alt:
             sty.add(*cmd)
-        sim_tbl.setStyle(sty)
-        story.append(sim_tbl)
-        story.append(Spacer(1, 10))
+        tbl.setStyle(sty)
+        return [tbl, Spacer(1, 8)]
+
+    grade_cases = context.get("grade_similar_cases", [])
+    mock_cases  = context.get("mock_similar_cases",  [])
+    # 구분 데이터가 없으면 기존 similar_cases 폴백
+    if not grade_cases and not mock_cases:
+        grade_cases = context.get("similar_cases", [])
+
+    if grade_cases or mock_cases:
+        story.extend(_sec("유사 사례", line_color=CB))
+        story.append(Spacer(1, 4))
+        if grade_cases:
+            story.append(_p("▶ 내신 유사도 순", "body_b"))
+            story.append(Spacer(1, 3))
+            story.extend(_sim_table(grade_cases, colors.HexColor("#BFDBFE")))
+        if mock_cases:
+            story.append(_p("▶ 모의 유사도 순", "body_b"))
+            story.append(Spacer(1, 3))
+            story.extend(_sim_table(mock_cases, colors.HexColor("#DDD6FE")))
+        story.append(Spacer(1, 4))
 
     # ══════════════════════════════════════════════════
     # 3. 합격 안정권 분석

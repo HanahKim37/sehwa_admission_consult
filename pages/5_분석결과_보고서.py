@@ -1,4 +1,4 @@
-from modules.auth import require_login, render_logout_button
+﻿from modules.auth import require_login, render_logout_button
 from pathlib import Path
 import streamlit as st
 import pandas as pd
@@ -160,6 +160,22 @@ def clean_display_id(v):
     if s.endswith(".0"):
         s = s[:-2]
     return s
+
+
+def _mask_id(s: str) -> str:
+    s = str(s).strip()
+    if len(s) <= 2:
+        return s
+    return s[:-2] + "**"
+
+
+def _mask_name(s: str) -> str:
+    s = str(s).strip()
+    if len(s) <= 1:
+        return s
+    if len(s) == 2:
+        return s[0] + "*"
+    return s[0] + "*" + s[2:]
 
 
 def section_header(title: str):
@@ -373,7 +389,9 @@ SUBJECT_LABEL_MAP = {
     "mock_eng_grade": "모의 영어 등급",
     "mock_soc_grade": "모의 사회/탐구 등급",
     "mock_sci_grade": "모의 과학/탐구 등급",
-    "mock_ks_percentile": "모의 국수 종합지표",
+    "mock_ks_percentile": "모의 국수탐 백분위합",
+    "mock_ks_pct_sum":    "모의 국수탐 백분위합",   # 현재 학생 4과목 합산 (졸업생 mock_ks_percentile과 비교)
+    "mock_ks_pos (교내위치)": "모의 교내 상대위치",
 }
 
 
@@ -404,12 +422,14 @@ def build_similarity_reason_lines(row: pd.Series, max_lines: int = 4) -> list[st
                 }
             )
 
-    # 고정 우선순위: 전교과 교내위치 → 국수영 교내위치 → 모의 수학 백분위 → 모의 국어 백분위
+    # 고정 우선순위: 전교과 교내위치 → 국수영 교내위치 → 국수탐 백분위합 → 수학 백분위 → 국어 백분위 → 교내위치
     _REASON_ORDER = {
         "all_pos": 0,
         "ksy_pos": 1,
-        "mock_math_percentile": 2,
-        "mock_kor_percentile": 3,
+        "mock_ks_percentile": 2,
+        "mock_math_percentile": 3,
+        "mock_kor_percentile": 4,
+        "mock_ks_pos (교내위치)": 5,
     }
     merged = sorted(merged,
                     key=lambda x: (_REASON_ORDER.get(x["항목"] or "", 99), -x["기여도"]))
@@ -417,9 +437,15 @@ def build_similarity_reason_lines(row: pd.Series, max_lines: int = 4) -> list[st
     def _fmt_reason_val(key: str, v):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return "-"
-        if "percentile" in key or "ks_" in key:
+        # 국수탐 백분위합은 0~400 스케일 — _fmt_percentile(100 - v) 쓰면 음수 발생
+        if key in ("mock_ks_percentile", "mock_ks_pct_sum"):
+            v_num = float(v)
+            if v_num > 100:
+                return f"백분위합 {int(round(v_num))}"
             return _fmt_percentile(v)
-        if "_pos" in key:
+        if "percentile" in key:
+            return _fmt_percentile(v)
+        if "_pos" in key or key == "mock_ks_pos (교내위치)":
             # grade_detail의 값은 _pop_normalize로 0~100 정규화된 값 (raw 0-1 아님)
             # _fmt_pos는 0-1 범위를 가정하므로 여기서 사용하면 음수 % 발생
             fv = float(v)
@@ -475,7 +501,9 @@ def build_fit_evidence_lines(current: dict, fit_scores: list[dict], top_cases: p
     if current.get("ksy_pos") is not None and not pd.isna(current.get("ksy_pos")):
         lines.append(f"국수영 교내 상대 위치는 {_fmt_pos(current.get('ksy_pos'))}입니다.")
     if current.get("mock_ks_percentile") is not None and not pd.isna(current.get("mock_ks_percentile")):
-        lines.append(f"모의 국수 종합 백분위는 {_fmt_percentile(current.get('mock_ks_percentile'))}입니다.")
+        _ks_v = float(current.get("mock_ks_percentile"))
+        _ks_str = f"백분위합 {int(round(_ks_v))}" if _ks_v > 100 else _fmt_percentile(_ks_v)
+        lines.append(f"모의 국수탐 백분위는 {_ks_str}입니다.")
     if current.get("mock_eng_grade") is not None and not pd.isna(current.get("mock_eng_grade")):
         lines.append(f"모의 영어 등급은 {_fmt_mock_grade(current.get('mock_eng_grade'))}입니다.")
 
@@ -498,7 +526,7 @@ def build_fit_evidence_lines(current: dict, fit_scores: list[dict], top_cases: p
     return lines
 
 
-def _admission_cards_html(rows_list: list) -> str:
+def _admission_cards_html(rows_list: list, show_adm_detail: bool = False) -> str:
     """수시 또는 정시 결과 행들을 결과 유형별로 묶어 박스 하나에 표시."""
     if not rows_list:
         return "<span style='font-size:12px;color:#94a3b8;'>기록 없음</span>"
@@ -529,8 +557,20 @@ def _admission_cards_html(rows_list: list) -> str:
         key = _classify(result)
         college = safe_str(r.get("college", ""))
         dept = safe_str(r.get("department", ""))
-        label = f"<span style='color:#1e293b;font-weight:600;'>{college}</span>" \
-                f"<span style='color:#64748b;'> / {dept}</span>"
+        adm = safe_str(r.get("admission_name", ""))
+        method = safe_str(r.get("admission_method", ""))
+        minimum = safe_str(r.get("minimum_requirement", ""))
+        label = (
+            f"<span style='color:#1e293b;font-weight:600;'>{college}</span>"
+            f"<span style='color:#64748b;'> / {dept}</span>"
+        )
+        if adm and adm not in ["-", "nan"]:
+            label += f"<br><span style='color:#64748b;font-size:10px;'>📋 {adm}</span>"
+        if show_adm_detail:
+            if method and method not in ["-", "nan"]:
+                label += f"<br><span style='color:#7c3aed;font-size:10px;'>🔹 {method}</span>"
+            if minimum and minimum not in ["-", "nan"]:
+                label += f"<br><span style='color:#b45309;font-size:10px;'>⚠️ 최저: {minimum}</span>"
         groups[key].append(label)
 
     parts = []
@@ -540,7 +580,7 @@ def _admission_cards_html(rows_list: list) -> str:
             continue
         bg, border, header = styles[key]
         rows_html = "".join(
-            f"<div style='padding:2px 0;border-bottom:1px solid {border}22;'>{item}</div>"
+            f"<div style='padding:3px 0;border-bottom:1px solid {border}22;'>{item}</div>"
             for item in items
         )
         parts.append(
@@ -557,6 +597,7 @@ def render_case_cards(
     susi_df: pd.DataFrame = None,
     jungsi_df: pd.DataFrame = None,
     sim_col: str = "total_similarity",
+    show_adm_detail: bool = False,
 ):
     if not isinstance(top_cases, pd.DataFrame) or top_cases.empty:
         st.info("표시할 유사 사례가 없습니다.")
@@ -631,22 +672,32 @@ def render_case_cards(
                         "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 수시 결과</div>",
                         unsafe_allow_html=True,
                     )
-                    st.markdown(_admission_cards_html(susi_rows), unsafe_allow_html=True)
+                    st.markdown(_admission_cards_html(susi_rows, show_adm_detail=show_adm_detail), unsafe_allow_html=True)
                 with res_c2:
                     st.markdown(
                         "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 정시 결과</div>",
                         unsafe_allow_html=True,
                     )
-                    st.markdown(_admission_cards_html(jungsi_rows), unsafe_allow_html=True)
+                    st.markdown(_admission_cards_html(jungsi_rows, show_adm_detail=show_adm_detail), unsafe_allow_html=True)
 
 
-def build_passing_analysis(top_cases: pd.DataFrame, susi_df: pd.DataFrame, jungsi_df: pd.DataFrame) -> dict:
+def build_passing_analysis(
+    top_cases: pd.DataFrame,
+    susi_df: pd.DataFrame,
+    jungsi_df: pd.DataFrame,
+    current_features=None,
+    graduates_df=None,
+) -> dict:
     """
     상위 유사 사례들의 실제 합격/등록 결과를 분석.
-    유사도가 높은 졸업생들이 합격한 학교/학과 목록을 안정권 기준으로 정렬해서 반환.
+    - 적정권: 현재 학생과 유사도가 높은 졸업생 합격 사례
+    - 안정권: 현재 학생보다 성적이 살짝 낮은 졸업생 합격 사례
     """
+    empty = {"susi": pd.DataFrame(), "jungsi": pd.DataFrame(),
+             "susi_below": pd.DataFrame(), "jungsi_below": pd.DataFrame()}
+
     if top_cases.empty or "student_id" not in top_cases.columns:
-        return {"susi": pd.DataFrame(), "jungsi": pd.DataFrame()}
+        return empty
 
     # 유사도 매핑 (학번·이름 포함)
     sim_map = {}
@@ -663,55 +714,124 @@ def build_passing_analysis(top_cases: pd.DataFrame, susi_df: pd.DataFrame, jungs
     def _is_pass(row_r, result_col="final_result", reg_col="registered"):
         fr = str(row_r.get(result_col, "")).strip()
         rg = str(row_r.get(reg_col, "")).strip()
-        # "합"이 포함되거나 "불"이 없고 등록 기호가 있으면 합격으로 판단
         if "합" in fr and "불합" not in fr:
             return True
         if rg and rg not in ["-", "nan", "", "X", "x", "불"]:
             return True
         return False
 
-    def _process_df(df, extra_cols):
+    def _process_df(df, id_set, code_map, extra_cols):
         if df.empty or "student_id" not in df.columns:
             return pd.DataFrame()
         d = df.copy()
         d["_sid"] = d["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
-        d = d[d["_sid"].isin(case_ids)].copy()
+        d = d[d["_sid"].isin(id_set)].copy()
         if d.empty:
             return pd.DataFrame()
         passed = d[d.apply(_is_pass, axis=1)].copy()
         if passed.empty:
             return pd.DataFrame()
-        passed["사례코드"] = passed["_sid"].map(lambda x: sim_map.get(x, {}).get("case_code", ""))
-        passed["학번"] = passed["_sid"].map(lambda x: sim_map.get(x, {}).get("student_id", ""))
-        passed["이름"] = passed["_sid"].map(lambda x: sim_map.get(x, {}).get("name", ""))
-        passed["유사도"] = passed["_sid"].map(lambda x: round(sim_map.get(x, {}).get("total_similarity", 0), 1))
-        keep = [c for c in ["사례코드", "학번", "이름", "유사도"] + extra_cols if c in passed.columns]
-        result = passed[keep].copy()
-        result = result.sort_values("유사도", ascending=False)
+        passed["사례코드"] = passed["_sid"].map(lambda x: code_map.get(x, {}).get("case_code", x))
+        passed["학번"]   = passed["_sid"].map(lambda x: code_map.get(x, {}).get("student_id", x))
+        passed["이름"]   = passed["_sid"].map(lambda x: code_map.get(x, {}).get("name", ""))
+        keep = [c for c in ["사례코드", "학번", "이름"] + extra_cols if c in passed.columns]
+        return passed[keep].copy()
 
-        # 안정권 레이블
-        def label(sim):
-            if sim >= 80:
-                return "안정권"
-            if sim >= 60:
-                return "적정권"
-            return "참고"
-        result["구분"] = result["유사도"].apply(label)
-        return result
-
+    # ── 적정권 (유사 학생) ────────────────────────────────────────────────────
     susi_out = _process_df(
-        susi_df,
-        ["college", "department", "admission_name", "admission_group", "final_result", "registered"],
+        susi_df, case_ids, sim_map,
+        ["college", "department", "admission_name", "admission_method", "minimum_requirement",
+         "admission_group", "final_result", "registered"],
     )
     jungsi_out = _process_df(
-        jungsi_df,
-        ["college", "department", "admission_name", "gun", "final_result", "registered"],
+        jungsi_df, case_ids, sim_map,
+        ["college", "department", "admission_name", "admission_method", "minimum_requirement",
+         "gun", "final_result", "registered"],
     )
-    return {"susi": susi_out, "jungsi": jungsi_out}
+    if not susi_out.empty:
+        susi_out["구분"] = "적정권"
+        susi_out["유사도"] = susi_out["학번"].map(
+            lambda x: round(sim_map.get(x, {}).get("total_similarity", 0), 1))
+    if not jungsi_out.empty:
+        jungsi_out["구분"] = "적정권"
+        jungsi_out["유사도"] = jungsi_out["학번"].map(
+            lambda x: round(sim_map.get(x, {}).get("total_similarity", 0), 1))
+
+    # ── 안정권 (성적 하위 학생) ───────────────────────────────────────────────
+    susi_below = pd.DataFrame()
+    jungsi_below = pd.DataFrame()
+
+    if (current_features is not None
+            and graduates_df is not None
+            and not graduates_df.empty
+            and "student_id" in graduates_df.columns):
+
+        gf = graduates_df.copy()
+        gf["_sid"] = gf["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
+
+        below_mask = pd.Series([False] * len(gf), index=gf.index)
+
+        try:
+            cur_grade = float(current_features.get("all_grade") or 0)
+            if cur_grade > 0 and "all_grade" in gf.columns:
+                gm = gf["all_grade"].apply(
+                    lambda x: (cur_grade + 0.3) <= float(x) <= (cur_grade + 0.8)
+                    if pd.notna(x) and x not in ("", "-") else False
+                )
+                below_mask = below_mask | gm
+        except Exception:
+            pass
+
+        try:
+            cur_pct = float(current_features.get("mock_ks_percentile") or 0)
+            if cur_pct > 0 and "mock_ks_percentile" in gf.columns:
+                mm = gf["mock_ks_percentile"].apply(
+                    lambda x: (cur_pct - 15) <= float(x) <= (cur_pct - 5)
+                    if pd.notna(x) and x not in ("", "-") else False
+                )
+                below_mask = below_mask | mm
+        except Exception:
+            pass
+
+        below_rows = gf[below_mask & ~gf["_sid"].isin(case_ids)]
+        below_ids = set(below_rows["_sid"].tolist())
+
+        if below_ids:
+            name_map = {}
+            for _bidx, (_, r) in enumerate(below_rows.drop_duplicates("_sid").iterrows()):
+                sid = r["_sid"]
+                name_map[sid] = {
+                    "case_code": f"사례{chr(ord('a') + _bidx)}",
+                    "student_id": sid,
+                    "name": safe_str(r.get("name", "")),
+                }
+
+            susi_below = _process_df(
+                susi_df, below_ids, name_map,
+                ["college", "department", "admission_name", "admission_method", "minimum_requirement",
+                 "admission_group", "final_result", "registered"],
+            )
+            jungsi_below = _process_df(
+                jungsi_df, below_ids, name_map,
+                ["college", "department", "admission_name", "admission_method", "minimum_requirement",
+                 "gun", "final_result", "registered"],
+            )
+            if not susi_below.empty:
+                susi_below["구분"] = "안정권"
+            if not jungsi_below.empty:
+                jungsi_below["구분"] = "안정권"
+
+    return {
+        "susi": susi_out,
+        "jungsi": jungsi_out,
+        "susi_below": susi_below,
+        "jungsi_below": jungsi_below,
+    }
 
 
-def _passing_card_html(records: list, show_adm_name: bool = True, show_gun: bool = False) -> str:
-    """합격/등록 레코드를 카드 HTML로 변환 (전형명·군 표시 옵션)."""
+def _passing_card_html(records: list, show_adm_name: bool = True, show_gun: bool = False,
+                       show_adm_detail: bool = False) -> str:
+    """합격/등록 레코드를 카드 HTML로 변환 (전형명·군·전형방법·최저 표시 옵션)."""
     if not records:
         return "<span style='font-size:12px;color:#94a3b8;'>없음</span>"
     parts = []
@@ -722,18 +842,26 @@ def _passing_card_html(records: list, show_adm_name: bool = True, show_gun: bool
         reg = str(r.get("registered", "")).strip()
         adm = safe_str(r.get("admission_name", ""))
         gun = safe_str(r.get("gun", ""))
+        method = safe_str(r.get("admission_method", ""))
+        minimum = safe_str(r.get("minimum_requirement", ""))
         if reg and reg not in ["-", "nan", "", "X", "x", "불", "None"]:
             emoji, bg, border = "🔵", "#eff6ff", "#3b82f6"
         else:
             emoji, bg, border = "✅", "#f0fdf4", "#22c55e"
-        sub = ""
+        sub_parts = []
         if show_adm_name and adm:
-            sub += f"<span style='color:#94a3b8;font-size:10px;'>{adm}</span>"
+            sub_parts.append(f"<span style='color:#64748b;font-size:10px;'>📋 {adm}</span>")
         if show_gun and gun:
-            sub += f"<span style='color:#94a3b8;font-size:10px;'> ({gun}군)</span>"
+            sub_parts.append(f"<span style='color:#94a3b8;font-size:10px;'>({gun}군)</span>")
+        if show_adm_detail:
+            if method and method not in ["-", "nan"]:
+                sub_parts.append(f"<span style='color:#7c3aed;font-size:10px;'>🔹 {method}</span>")
+            if minimum and minimum not in ["-", "nan"]:
+                sub_parts.append(f"<span style='color:#b45309;font-size:10px;'>⚠️ 최저: {minimum}</span>")
+        sub = "<br>".join(sub_parts)
         parts.append(
             f"<div style='border:1.5px solid {border};border-radius:8px;"
-            f"padding:5px 10px;background:{bg};margin-bottom:4px;font-size:11px;line-height:1.5;'>"
+            f"padding:5px 10px;background:{bg};margin-bottom:4px;font-size:11px;line-height:1.6;'>"
             f"<span style='font-weight:700;color:{border};'>{emoji} {result}</span><br>"
             f"<span style='color:#1e293b;font-weight:600;'>{college}</span>"
             f"<span style='color:#64748b;'> / {dept}</span>"
@@ -743,98 +871,139 @@ def _passing_card_html(records: list, show_adm_name: bool = True, show_gun: bool
     return "".join(parts)
 
 
-def render_passing_tab(top_cases: pd.DataFrame, susi_df: pd.DataFrame, jungsi_df: pd.DataFrame):
-    passing = build_passing_analysis(top_cases, susi_df, jungsi_df)
-    susi_p = passing["susi"]
-    jungsi_p = passing["jungsi"]
+def render_passing_tab(
+    top_cases: pd.DataFrame,
+    susi_df: pd.DataFrame,
+    jungsi_df: pd.DataFrame,
+    current_features=None,
+    graduates_df=None,
+):
+    passing = build_passing_analysis(
+        top_cases, susi_df, jungsi_df,
+        current_features=current_features,
+        graduates_df=graduates_df,
+    )
+    susi_p       = passing["susi"]
+    jungsi_p     = passing["jungsi"]
+    susi_below   = passing["susi_below"]
+    jungsi_below = passing["jungsi_below"]
 
-    if susi_p.empty and jungsi_p.empty:
-        st.info("상위 유사 사례에서 합격/등록 결과가 확인되지 않습니다.")
+    has_similar = not susi_p.empty or not jungsi_p.empty
+    has_below   = not susi_below.empty or not jungsi_below.empty
+
+    if not has_similar and not has_below:
+        st.info("합격/등록 결과가 확인되지 않습니다.")
         return
 
     st.markdown(
         """
-        <div style="background:#f0fdf4;border:1px solid #86efac;border-radius:12px;padding:14px 18px;margin-bottom:14px;">
-        <b>읽는 방법</b>: 현재 학생과 유사도가 높은 졸업생들이 실제로 합격(또는 등록)한 학교·학과 목록입니다.
-        유사도가 높을수록 <b>안정권</b>에 가깝습니다. 본 결과는 상담 참고용이며 실제 합격을 보장하지 않습니다.
+        <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:14px 18px;margin-bottom:14px;font-size:13px;">
+        <b>읽는 방법</b><br>
+        🟢 <b>적정권</b>: 현재 학생과 성적이 유사한 졸업생들이 합격한 사례입니다.<br>
+        🔵 <b>안정권</b>: 현재 학생보다 성적이 살짝 낮은 졸업생들도 합격한 사례입니다 — 현재 학생에게 더 유리한 참고 정보입니다.<br>
+        본 결과는 상담 참고용이며 실제 합격을 보장하지 않습니다.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # 사례코드 순서 수집 (susi → jungsi 순, 중복 제거)
-    seen: set = set()
-    ordered_codes: list = []
-    for df in [susi_p, jungsi_p]:
-        if not df.empty and "사례코드" in df.columns:
-            for code in df["사례코드"].tolist():
-                if code and code not in seen:
-                    seen.add(code)
-                    ordered_codes.append(code)
-
-    # 사례코드별 유사도·구분 정보
-    info_map: dict = {}
-    for df in [susi_p, jungsi_p]:
-        if not df.empty and "사례코드" in df.columns:
-            for _, row in df.iterrows():
-                code = safe_str(row.get("사례코드", ""))
-                if code and code not in info_map:
-                    info_map[code] = {
-                        "유사도": float(row.get("유사도", 0) or 0),
-                        "구분": safe_str(row.get("구분", "")),
-                    }
-
-    CATEGORY_STYLE = {
-        "안정권": ("#dcfce7", "#166534"),
-        "적정권": ("#dbeafe", "#1e40af"),
-        "참고":   ("#f1f5f9", "#475569"),
+    BADGE = {
+        "적정권": ("#dcfce7", "#166534"),   # 초록
+        "안정권": ("#dbeafe", "#1e40af"),   # 파랑
     }
 
-    for code in ordered_codes:
-        info = info_map.get(code, {})
-        sim = info.get("유사도", 0)
-        category = info.get("구분", "")
-        badge_bg, badge_color = CATEGORY_STYLE.get(category, ("#f1f5f9", "#475569"))
+    def _collect_codes(s_df, j_df):
+        seen, codes = set(), []
+        for df in [s_df, j_df]:
+            if not df.empty and "사례코드" in df.columns:
+                for c in df["사례코드"].tolist():
+                    if c and c not in seen:
+                        seen.add(c); codes.append(c)
+        return codes
 
-        # 해당 사례의 수시·정시 합격 기록
-        case_susi = (
-            susi_p[susi_p["사례코드"] == code].to_dict("records")
-            if not susi_p.empty and "사례코드" in susi_p.columns else []
-        )
-        case_jungsi = (
-            jungsi_p[jungsi_p["사례코드"] == code].to_dict("records")
-            if not jungsi_p.empty and "사례코드" in jungsi_p.columns else []
-        )
+    def _info_map(s_df, j_df, sim_key="유사도"):
+        m = {}
+        for df in [s_df, j_df]:
+            if not df.empty and "사례코드" in df.columns:
+                for _, row in df.iterrows():
+                    code = safe_str(row.get("사례코드", ""))
+                    if code and code not in m:
+                        m[code] = {
+                            "유사도": float(row.get(sim_key, 0) or 0),
+                            "구분": safe_str(row.get("구분", "")),
+                        }
+        return m
 
-        with st.container(border=True):
-            left, right = st.columns([1.1, 2.9])
+    # ── 전형방법·최저학력기준 표시 토글 ──────────────────────────────────────
+    _show_adm_detail = st.toggle("📋 전형방법·최저학력기준 보기", value=False, key="passing_adm_detail")
 
-            with left:
-                st.markdown(f"### {code}")
-                st.caption(f"유사도 {sim:.1f}%")
-                st.markdown(
-                    f"<span style='background:{badge_bg};color:{badge_color};border-radius:5px;"
-                    f"padding:2px 10px;font-size:12px;font-weight:700;'>{category}</span>",
-                    unsafe_allow_html=True,
-                )
+    def _render_cards(s_df, j_df, show_sim=True):
+        codes    = _collect_codes(s_df, j_df)
+        info_map = _info_map(s_df, j_df)
+        for code in codes:
+            info     = info_map.get(code, {})
+            sim      = info.get("유사도", 0)
+            category = info.get("구분", "")
+            badge_bg, badge_color = BADGE.get(category, ("#f1f5f9", "#475569"))
 
-            with right:
-                rc1, rc2 = st.columns(2)
-                with rc1:
+            case_susi = (
+                s_df[s_df["사례코드"] == code].to_dict("records")
+                if not s_df.empty and "사례코드" in s_df.columns else []
+            )
+            case_jungsi = (
+                j_df[j_df["사례코드"] == code].to_dict("records")
+                if not j_df.empty and "사례코드" in j_df.columns else []
+            )
+
+            with st.container(border=True):
+                left, right = st.columns([1.1, 2.9])
+                with left:
+                    st.markdown(f"### {code}")
+                    if show_sim and sim:
+                        st.caption(f"유사도 {sim:.1f}%")
                     st.markdown(
-                        "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 수시 합격</div>",
+                        f"<span style='background:{badge_bg};color:{badge_color};border-radius:5px;"
+                        f"padding:2px 10px;font-size:12px;font-weight:700;'>{category}</span>",
                         unsafe_allow_html=True,
                     )
-                    st.markdown(_passing_card_html(case_susi, show_adm_name=True), unsafe_allow_html=True)
-                with rc2:
-                    st.markdown(
-                        "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 정시 합격</div>",
-                        unsafe_allow_html=True,
-                    )
-                    st.markdown(_passing_card_html(case_jungsi, show_gun=True), unsafe_allow_html=True)
+                with right:
+                    rc1, rc2 = st.columns(2)
+                    with rc1:
+                        st.markdown(
+                            "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 수시 합격</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(_passing_card_html(case_susi, show_adm_name=True,
+                                                       show_adm_detail=_show_adm_detail), unsafe_allow_html=True)
+                    with rc2:
+                        st.markdown(
+                            "<div style='font-size:12px;font-weight:700;color:#344054;margin-bottom:4px;'>📋 정시 합격</div>",
+                            unsafe_allow_html=True,
+                        )
+                        st.markdown(_passing_card_html(case_jungsi, show_gun=True,
+                                                       show_adm_detail=_show_adm_detail), unsafe_allow_html=True)
 
-    # 교사용: 학번·이름·일련번호 포함 상세 표
-    # graduate_db["grade"]에서 직접 매핑 (업로드 즉시 사용 가능)
+    # ── 적정권 섹션 ───────────────────────────────────────────────────────────
+    if has_similar:
+        st.markdown(
+            "<div style='background:#f0fdf4;border-left:4px solid #22c55e;"
+            "border-radius:6px;padding:8px 14px;margin:12px 0 10px 0;"
+            "font-weight:700;color:#166534;font-size:14px;'>🟢 적정권 — 유사 학생 합격 사례</div>",
+            unsafe_allow_html=True,
+        )
+        _render_cards(susi_p, jungsi_p, show_sim=True)
+
+    # ── 안정권 섹션 ───────────────────────────────────────────────────────────
+    if has_below:
+        st.markdown(
+            "<div style='background:#eff6ff;border-left:4px solid #3b82f6;"
+            "border-radius:6px;padding:8px 14px;margin:20px 0 10px 0;"
+            "font-weight:700;color:#1e40af;font-size:14px;'>🔵 안정권 — 성적 하위 학생 합격 사례</div>",
+            unsafe_allow_html=True,
+        )
+        _render_cards(susi_below, jungsi_below, show_sim=False)
+
+    # ── 교사용 상세 보기 ──────────────────────────────────────────────────────
     _serial_pass = {}
     _gdb = st.session_state.get("graduate_db") or {}
     _raw_grade_pass = _gdb.get("grade", pd.DataFrame()) if isinstance(_gdb, dict) else pd.DataFrame()
@@ -844,45 +1013,112 @@ def render_passing_tab(top_cases: pd.DataFrame, susi_df: pd.DataFrame, jungsi_df
             _sid = str(_r.get("student_id", "")).replace(".0", "").strip()
             _serial_pass[_sid] = _r.get("serial_no", "")
 
-    def _inject_serial(df, id_col="학번"):
-        if df.empty or id_col not in df.columns or not _serial_pass:
+    def _apply_passing_mask(df):
+        if st.session_state.get("_passing_show_full", False):
             return df
         d = df.copy()
-        serial_vals = d[id_col].astype(str).str.strip().map(lambda x: _serial_pass.get(x, ""))
-        insert_pos = d.columns.tolist().index(id_col)
-        d.insert(insert_pos, "일련번호", serial_vals)
+        if "학번" in d.columns:
+            d["학번"] = d["학번"].astype(str).apply(_mask_id)
+        if "이름" in d.columns:
+            d["이름"] = d["이름"].astype(str).apply(_mask_name)
         return d
 
+    def _build_passing_teacher_df(parts_raw, col_rename):
+        """적정권+안정권 합쳐서 교사용 테이블 구성."""
+        if not parts_raw:
+            return pd.DataFrame()
+        combined = pd.concat(parts_raw, ignore_index=True)
+
+        # 구분 뱃지 이모지
+        def _fmt_cat(v):
+            s = str(v)
+            if s == "적정권": return "🟢 적정권"
+            if s == "안정권": return "🔵 안정권"
+            return s
+        if "구분" in combined.columns:
+            combined["구분"] = combined["구분"].apply(_fmt_cat)
+
+        # 성적 데이터 병합 (학번 = student_id 기준)
+        _gf = st.session_state.get("graduate_features", pd.DataFrame())
+        if isinstance(_gf, pd.DataFrame) and not _gf.empty and "student_id" in _gf.columns:
+            gf = _gf.copy()
+            gf["student_id"] = gf["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
+            score_cols = [c for c in [
+                "all_grade", "ksy_grade", "kor_grade", "math_grade", "eng_grade",
+                "mock_kor_percentile", "mock_math_percentile", "mock_eng_grade", "mock_ks_percentile",
+            ] if c in gf.columns]
+            if score_cols:
+                combined = combined.merge(
+                    gf[["student_id"] + score_cols].rename(columns={"student_id": "학번"}),
+                    on="학번", how="left",
+                )
+
+        # 일련번호 삽입 (마스킹 전에 raw 학번으로 조회)
+        if _serial_pass and "학번" in combined.columns:
+            serial_vals = combined["학번"].astype(str).str.strip().map(lambda x: _serial_pass.get(x, ""))
+            combined.insert(0, "일련번호", serial_vals)
+
+        # 마스킹
+        combined = _apply_passing_mask(combined)
+
+        # 열 이름 변환 (등록·유사도 제외)
+        grade_rename = {
+            "all_grade": "전교과 등급", "ksy_grade": "국수영 등급",
+            "kor_grade": "국어 등급", "math_grade": "수학 등급", "eng_grade": "영어 등급",
+            "mock_kor_percentile": "모의 국어 백분위", "mock_math_percentile": "모의 수학 백분위",
+            "mock_eng_grade": "모의 영어 등급", "mock_ks_percentile": "모의 국수탐 백분위합",
+        }
+        all_rename = {**col_rename, **grade_rename}
+        combined = combined.rename(columns={k: v for k, v in all_rename.items() if k in combined.columns})
+
+        # 불필요 열 제거
+        combined = combined.drop(columns=[c for c in ["등록", "유사도", "유사도(%)", "registered"] if c in combined.columns], errors="ignore")
+
+        # 열 순서: 구분 → 일련번호 → 사례코드 → 학번 → 이름 → 성적 → 입시결과
+        priority = [
+            "구분", "일련번호", "사례코드", "학번", "이름",
+            "전교과 등급", "국수영 등급", "국어 등급", "수학 등급", "영어 등급",
+            "모의 국어 백분위", "모의 수학 백분위", "모의 영어 등급", "모의 국수탐 백분위합",
+        ]
+        rest = [c for c in combined.columns if c not in priority]
+        combined = combined[[c for c in priority if c in combined.columns] + rest]
+        return combined
+
+    susi_col_rename = {
+        "college": "대학", "department": "모집단위",
+        "admission_name": "전형명", "admission_method": "전형방법",
+        "minimum_requirement": "최저학력기준", "admission_group": "전형분류",
+        "final_result": "최종결과",
+    }
+    jungsi_col_rename = {
+        "college": "대학", "department": "모집단위",
+        "admission_name": "전형명", "admission_method": "전형방법",
+        "minimum_requirement": "최저학력기준", "gun": "군",
+        "final_result": "최종결과",
+    }
+
+    _passing_show_full = st.toggle("🔓 학번·이름 보기", value=False, key="passing_show_full")
+    st.session_state["_passing_show_full"] = _passing_show_full
     with st.expander("교사용 상세 보기"):
         ptab1, ptab2 = st.tabs(["수시 합격", "정시 합격"])
         with ptab1:
-            if susi_p.empty:
+            df_t = _build_passing_teacher_df(
+                [d for d in [susi_p, susi_below] if not d.empty],
+                susi_col_rename,
+            )
+            if df_t.empty:
                 st.info("수시 합격 사례가 없습니다.")
             else:
-                col_rename = {
-                    "사례코드": "사례코드", "학번": "학번", "이름": "이름",
-                    "유사도": "유사도(%)", "구분": "구분",
-                    "college": "대학", "department": "모집단위",
-                    "admission_name": "전형명", "admission_group": "전형분류",
-                    "final_result": "최종결과", "registered": "등록",
-                }
-                disp = susi_p.rename(columns={k: v for k, v in col_rename.items() if k in susi_p.columns})
-                disp = _inject_serial(disp)
-                st.dataframe(disp.sort_values("유사도(%)", ascending=False), use_container_width=True, hide_index=True)
+                st.dataframe(df_t, use_container_width=True, hide_index=True)
         with ptab2:
-            if jungsi_p.empty:
+            df_t = _build_passing_teacher_df(
+                [d for d in [jungsi_p, jungsi_below] if not d.empty],
+                jungsi_col_rename,
+            )
+            if df_t.empty:
                 st.info("정시 합격 사례가 없습니다.")
             else:
-                col_rename_j = {
-                    "사례코드": "사례코드", "학번": "학번", "이름": "이름",
-                    "유사도": "유사도(%)", "구분": "구분",
-                    "college": "대학", "department": "모집단위",
-                    "admission_name": "전형명", "gun": "군",
-                    "final_result": "최종결과", "registered": "등록",
-                }
-                disp_j = jungsi_p.rename(columns={k: v for k, v in col_rename_j.items() if k in jungsi_p.columns})
-                disp_j = _inject_serial(disp_j)
-                st.dataframe(disp_j.sort_values("유사도(%)", ascending=False), use_container_width=True, hide_index=True)
+                st.dataframe(df_t, use_container_width=True, hide_index=True)
 
 
 def _result_badge(v: str) -> str:
@@ -985,11 +1221,17 @@ def render_fit_case_details(top_cases: pd.DataFrame, susi_df: pd.DataFrame, jung
             d["_sort"] = d["final_result"].apply(_sort_key)
             d = d.sort_values("_sort").drop(columns=["_sort"])
             d["final_result"] = d["final_result"].astype(str).apply(_result_badge)
-        return d.rename(columns={
+        d = d.rename(columns={
             "college": "대학", "department": "모집단위",
             "admission_name": "전형명", "gun": "군",
             "final_result": "최종결과", "registered": "등록",
         })
+        if not st.session_state.get("_fit_show_full", False):
+            if "학번" in d.columns:
+                d["학번"] = d["학번"].astype(str).apply(_mask_id)
+            if "이름" in d.columns:
+                d["이름"] = d["이름"].astype(str).apply(_mask_name)
+        return d
 
     ft1, ft2, ft3, ft4 = st.tabs(["교과/종합형 수시 사례", "논술형 수시 사례", "실기형 수시 사례", "정시 사례"])
     with ft1:
@@ -1412,30 +1654,84 @@ if st.button("분석 실행", type="primary"):
     )
     disclaimer_lines = get_report_disclaimer_lines()
 
-    # 유사 사례: 성적 컬럼 + 유사 이유 병합
-    report_cases = []
-    if not top_cases.empty:
-        rc_df = top_cases.copy()
-        rc_df["student_id"] = rc_df["student_id"].astype(str).str.replace(".0","",regex=False).str.strip()
-        # graduates에서 직접 성적 병합 (session_state 사용 안 함 — 타이밍 이슈 방지)
+    # 유사 사례: 성적 컬럼 + 유사 이유 병합 (내신/모의 분리)
+    # PDF 유사 이유 항목 제한: 내신순=교내위치 2개, 모의순=국수 백분위 2개
+    _GRADE_PDF_KEYS = {"all_pos", "ksy_pos"}
+    _MOCK_PDF_KEYS  = {"mock_math_percentile", "mock_kor_percentile"}
+
+    def _build_report_cases(sim_df: pd.DataFrame, sim_col: str) -> list:
+        """sim_df(grade_sim 또는 mock_sim)에서 PDF용 사례 리스트 생성."""
+        if sim_df.empty:
+            return []
+        from modules.similarity_engine import get_top_similar_cases as _gtsc
+        rc = _gtsc(sim_df, n=8).copy()
+        if "student_id" not in rc.columns:
+            return []
+        rc["student_id"] = rc["student_id"].astype(str).str.replace(".0","",regex=False).str.strip()
+        rc["susi_summary"]   = rc["student_id"].apply(lambda x: susi_summary(x, susi_df))
+        rc["jungsi_summary"] = rc["student_id"].apply(lambda x: jungsi_summary(x, jungsi_df))
+        rc["case_code"] = [f"사례 {chr(65+i)}" for i in range(len(rc))]
         if not graduates.empty and "student_id" in graduates.columns:
             gf = graduates.copy()
             gf["student_id"] = gf["student_id"].astype(str).str.replace(".0","",regex=False).str.strip()
             score_cols = [c for c in ["all_grade", "ksy_grade", "mock_ks_percentile"] if c in gf.columns]
             if score_cols:
-                rc_df = rc_df.merge(gf[["student_id"] + score_cols], on="student_id", how="left")
-        keep_cols = [c for c in ["case_code", "all_grade", "ksy_grade", "mock_ks_percentile",
-                                  "susi_summary", "jungsi_summary",
-                                  "grade_detail", "mock_detail"] if c in rc_df.columns]
-        report_cases = rc_df[keep_cols].to_dict(orient="records")
-        # 유사 이유 텍스트 추가
-        for idx, (_, row) in enumerate(rc_df.iterrows()):
-            if idx < len(report_cases):
-                reasons = build_similarity_reason_lines(row, max_lines=4)
-                report_cases[idx]["similarity_reason"] = "  /  ".join(reasons)
+                rc = rc.merge(gf[["student_id"] + score_cols], on="student_id", how="left")
+        keep = [c for c in ["case_code", "all_grade", "ksy_grade", "mock_ks_percentile",
+                             "susi_summary", "jungsi_summary",
+                             "grade_detail", "mock_detail"] if c in rc.columns]
+        cases = rc[keep].to_dict(orient="records")
+        # PDF 이유 키 필터: 내신순=교내위치, 모의순=국수 백분위만
+        _allowed = _GRADE_PDF_KEYS if sim_col == "grade_similarity" else _MOCK_PDF_KEYS
+        for idx, (_, row) in enumerate(rc.iterrows()):
+            if idx < len(cases):
+                all_reasons = build_similarity_reason_lines(row, max_lines=10)
+                # 키 필터: "라벨: 현재 X / 사례 Y" 에서 원본 키 매칭
+                filtered = []
+                for item in _get_detail_items(row):
+                    if item.get("항목") in _allowed:
+                        key  = item["항목"]
+                        cur  = item.get("현재값")
+                        grad = item.get("졸업생값")
+                        filtered.append(
+                            f"{to_display_label(key)}: 현재 {_fmt_reason_val_safe(key, cur)} / 사례 {_fmt_reason_val_safe(key, grad)}"
+                        )
+                cases[idx]["similarity_reason"] = "  /  ".join(filtered) if filtered else (
+                    "  /  ".join(all_reasons[:2])
+                )
+        return cases
+
+    def _get_detail_items(row) -> list:
+        """row에서 grade_detail + mock_detail 병합."""
+        def _safe_list(v):
+            return v if isinstance(v, list) else []
+        return _safe_list(row.get("grade_detail")) + _safe_list(row.get("mock_detail"))
+
+    def _fmt_reason_val_safe(key: str, v) -> str:
+        """PDF 이유 값 포맷 (간략)."""
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return "-"
+        try:
+            v_f = float(v)
+            if key in ("all_pos", "ksy_pos", "kor_pos", "math_pos", "eng_pos",
+                       "soc_pos", "sci_pos", "mock_ks_pos (교내위치)"):
+                # pos는 정규화된 0~100 값 → "상위 약 X%" 로 표시
+                top = round(100 - v_f)
+                return f"상위 약 {top}%"
+            if key in ("mock_kor_percentile", "mock_math_percentile",
+                       "mock_soc_percentile", "mock_sci_percentile"):
+                top = round(100 - v_f)
+                return f"{int(round(v_f))} (상위 약 {top}%)"
+        except Exception:
+            pass
+        return str(v)
+
+    report_cases       = _build_report_cases(total_sim,  "total_similarity")
+    grade_report_cases = _build_report_cases(grade_sim,  "grade_similarity")
+    mock_report_cases  = _build_report_cases(mock_sim,   "mock_similarity")
 
     # 합격 안정권에도 성적 컬럼 병합
-    passing_data   = build_passing_analysis(top_cases, susi_df, jungsi_df)
+    passing_data   = build_passing_analysis(top_cases, susi_df, jungsi_df, current_features=current, graduates_df=graduates)
     passing_susi   = passing_data["susi"].to_dict("records")   if not passing_data["susi"].empty   else []
     passing_jungsi = passing_data["jungsi"].to_dict("records") if not passing_data["jungsi"].empty else []
     if (passing_susi or passing_jungsi) and not graduates.empty and "student_id" in graduates.columns:
@@ -1459,18 +1755,26 @@ if st.button("분석 실행", type="primary"):
 
     counseling_data = build_counseling_data(current, top_cases, susi_df, jungsi_df)
 
-    context = build_report_context(
+    # pinned_entries 없는 기본 컨텍스트를 저장 → 다운로드 시 최신값으로 재생성
+    _ctx_base = dict(
         student=current,
         similar_cases=report_cases,
+        grade_similar_cases=grade_report_cases,
+        mock_similar_cases=mock_report_cases,
         fit_result=fit_result,
         strength=strength,
         weakness=weakness,
         strategy=strategy,
         disclaimer_lines=disclaimer_lines,
-        pinned_entries=st.session_state.get("report_pinned_entries", []),
         passing_susi=passing_susi,
         passing_jungsi=passing_jungsi,
         counseling_data=counseling_data,
+    )
+    st.session_state["report_context_base"] = _ctx_base
+
+    context = build_report_context(
+        **_ctx_base,
+        pinned_entries=st.session_state.get("report_pinned_entries", []),
     )
 
     html = render_report_html(context)
@@ -1559,7 +1863,7 @@ if result:
     debug_lines = [
         f"현재 학생 내신 상대위치: 전교과 {_fmt_pos(current.get('all_pos'))}, 국수영 {_fmt_pos(current.get('ksy_pos'))}, 국어 {_fmt_pos(current.get('kor_pos'))}, 수학 {_fmt_pos(current.get('math_pos'))}",
         f"현재 학생 내신 등급: 전교과 {_fmt_grade_with_pos(current.get('all_grade'), current.get('all_pos'))}, 국수영 {_fmt_grade_with_pos(current.get('ksy_grade'), current.get('ksy_pos'))}, 국어 {_fmt_grade_with_pos(current.get('kor_grade'), current.get('kor_pos'))}, 수학 {_fmt_grade_with_pos(current.get('math_grade'), current.get('math_pos'))}, 영어 {_fmt_grade_with_pos(current.get('eng_grade'), current.get('eng_pos'))}",
-        f"현재 학생 모의값: 국어 {_fmt_percentile(current.get('mock_kor_percentile'))}, 수학 {_fmt_percentile(current.get('mock_math_percentile'))}, 영어 {_fmt_mock_grade(current.get('mock_eng_grade'))}, 사회/탐구 {_fmt_mock_grade(current.get('mock_soc_grade'))}, 과학/탐구 {_fmt_mock_grade(current.get('mock_sci_grade'))}, 국수 종합 {_fmt_percentile(current.get('mock_ks_percentile'))}",
+        f"현재 학생 모의값: 국어 {_fmt_percentile(current.get('mock_kor_percentile'))}, 수학 {_fmt_percentile(current.get('mock_math_percentile'))}, 영어 {_fmt_mock_grade(current.get('mock_eng_grade'))}, 사회/탐구 {_fmt_mock_grade(current.get('mock_soc_grade'))}, 과학/탐구 {_fmt_mock_grade(current.get('mock_sci_grade'))}, 국수탐 {'백분위합 ' + str(int(round(float(current.get('mock_ks_percentile'))))) if current.get('mock_ks_percentile') is not None and not pd.isna(current.get('mock_ks_percentile')) and float(current.get('mock_ks_percentile')) > 100 else _fmt_percentile(current.get('mock_ks_percentile'))}",
     ]
     colored_reason_box(
         "유사도 계산에 실제 사용된 현재 학생 핵심값",
@@ -1576,7 +1880,8 @@ if result:
     main_tab1, main_tab2 = st.tabs(["유사 사례", "합격 안정권 분석"])
 
     with main_tab1:
-        sim_sub1, sim_sub2, sim_sub3 = st.tabs(["통합 유사도 순", "내신 유사도 순", "모의 유사도 순"])
+        _case_adm_detail = st.toggle("📋 전형방법·최저학력기준 보기", value=False, key="case_adm_detail")
+        sim_sub1, sim_sub2 = st.tabs(["내신 유사도 순", "모의 유사도 순"])
 
         # 내신/모의 탭용 top cases 준비
         grade_sim_top = prepare_sim_tab_cases(
@@ -1586,73 +1891,83 @@ if result:
             result.get("mock_sim", pd.DataFrame()), susi_df_cur, jungsi_df_cur
         )
 
+        def _render_teacher_table(cases_df, sim_col_key):
+            if not isinstance(cases_df, pd.DataFrame) or cases_df.empty:
+                st.info("표시할 유사 사례가 없습니다.")
+                return
+            base_cols = [c for c in ["case_code", "student_id", "name", "track",
+                                     sim_col_key, "susi_summary", "jungsi_summary"]
+                         if c in cases_df.columns]
+            display_df = cases_df[base_cols].copy()
+            display_df["student_id"] = display_df["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
+
+            grad_features = st.session_state.get("graduate_features", pd.DataFrame())
+            if not grad_features.empty and "student_id" in grad_features.columns:
+                gf = grad_features.copy()
+                gf["student_id"] = gf["student_id"].astype(str).str.strip()
+                score_cols = [c for c in ["all_grade", "ksy_grade", "kor_grade", "math_grade",
+                                          "eng_grade", "mock_kor_percentile", "mock_math_percentile",
+                                          "mock_eng_grade", "mock_ks_percentile"]
+                              if c in gf.columns]
+                if score_cols:
+                    display_df = display_df.merge(gf[["student_id"] + score_cols], on="student_id", how="left")
+
+            _raw_g = graduate_db.get("grade", pd.DataFrame()) if isinstance(graduate_db, dict) else pd.DataFrame()
+            if isinstance(_raw_g, pd.DataFrame) and not _raw_g.empty \
+                    and "serial_no" in _raw_g.columns and "student_id" in _raw_g.columns:
+                _sdf = _raw_g[["student_id", "serial_no"]].drop_duplicates("student_id").copy()
+                _sdf["student_id"] = _sdf["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
+                display_df = display_df.merge(_sdf, on="student_id", how="left")
+
+            if "serial_no" in display_df.columns:
+                cols = display_df.columns.tolist()
+                cols.remove("serial_no")
+                sid_idx = cols.index("student_id") if "student_id" in cols else 0
+                cols.insert(sid_idx, "serial_no")
+                display_df = display_df[cols]
+
+            col_rename = {
+                "serial_no": "일련번호", "case_code": "사례코드", "student_id": "학번",
+                "name": "이름", "track": "계열",
+                "grade_similarity": "내신 유사도", "mock_similarity": "모의 유사도",
+                "all_grade": "전교과 등급", "ksy_grade": "국수영 등급",
+                "kor_grade": "국어 등급", "math_grade": "수학 등급", "eng_grade": "영어 등급",
+                "mock_kor_percentile": "모의 국어 백분위", "mock_math_percentile": "모의 수학 백분위",
+                "mock_eng_grade": "모의 영어 등급", "mock_ks_percentile": "모의 국수 종합지표",
+                "susi_summary": "수시 결과 요약", "jungsi_summary": "정시 결과 요약",
+            }
+            display_df = display_df.rename(columns={k: v for k, v in col_rename.items() if k in display_df.columns})
+            if "학번" in display_df.columns:
+                display_df["학번"] = display_df["학번"].apply(clean_display_id)
+            if not st.session_state.get("_analysis_show_full", False):
+                if "학번" in display_df.columns:
+                    display_df["학번"] = display_df["학번"].apply(_mask_id)
+                if "이름" in display_df.columns:
+                    display_df["이름"] = display_df["이름"].apply(_mask_name)
+            styled_dataframe(display_df)
+
         with sim_sub1:
-            render_case_cards(top_cases_result, susi_df_cur, jungsi_df_cur, sim_col="total_similarity")
+            render_case_cards(grade_sim_top, susi_df_cur, jungsi_df_cur,
+                              sim_col="grade_similarity", show_adm_detail=_case_adm_detail)
+            _grade_show_full = st.toggle("🔓 학번·이름 보기", value=False, key="analysis_show_full_grade")
+            st.session_state["_analysis_show_full"] = _grade_show_full
+            with st.expander("교사용 상세 보기"):
+                _render_teacher_table(grade_sim_top, "grade_similarity")
 
         with sim_sub2:
-            render_case_cards(grade_sim_top, susi_df_cur, jungsi_df_cur, sim_col="grade_similarity")
-
-        with sim_sub3:
-            render_case_cards(mock_sim_top, susi_df_cur, jungsi_df_cur, sim_col="mock_similarity")
-
-        with st.expander("교사용 상세 보기"):
-            if isinstance(top_cases_result, pd.DataFrame) and not top_cases_result.empty:
-                # 기본 유사도 컬럼 (근거 비중 제외)
-                base_cols = [c for c in ["case_code", "student_id", "name", "track",
-                                         "grade_similarity", "mock_similarity", "total_similarity",
-                                         "susi_summary", "jungsi_summary"]
-                             if c in top_cases_result.columns]
-                display_df = top_cases_result[base_cols].copy()
-                display_df["student_id"] = display_df["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
-
-                # 졸업생 실제 성적 + 일련번호 병합
-                grad_features = st.session_state.get("graduate_features", pd.DataFrame())
-                if not grad_features.empty and "student_id" in grad_features.columns:
-                    gf = grad_features.copy()
-                    gf["student_id"] = gf["student_id"].astype(str).str.strip()
-                    score_cols = [c for c in ["all_grade", "ksy_grade", "kor_grade", "math_grade",
-                                              "eng_grade", "mock_kor_percentile", "mock_math_percentile",
-                                              "mock_eng_grade", "mock_ks_percentile"]
-                                  if c in gf.columns]
-                    if score_cols:
-                        display_df = display_df.merge(gf[["student_id"] + score_cols], on="student_id", how="left")
-
-                # 일련번호: graduate_db["grade"]에서 직접 (업로드 즉시 사용 가능)
-                _raw_g = graduate_db.get("grade", pd.DataFrame()) if isinstance(graduate_db, dict) else pd.DataFrame()
-                if isinstance(_raw_g, pd.DataFrame) and not _raw_g.empty                         and "serial_no" in _raw_g.columns and "student_id" in _raw_g.columns:
-                    _sdf = _raw_g[["student_id", "serial_no"]].drop_duplicates("student_id").copy()
-                    _sdf["student_id"] = _sdf["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
-                    display_df = display_df.merge(_sdf, on="student_id", how="left")
-
-                # 일련번호를 학번 바로 왼쪽으로 이동
-                if "serial_no" in display_df.columns:
-                    cols = display_df.columns.tolist()
-                    cols.remove("serial_no")
-                    sid_idx = cols.index("student_id") if "student_id" in cols else 0
-                    cols.insert(sid_idx, "serial_no")
-                    display_df = display_df[cols]
-
-                # 한글 컬럼명으로 변환
-                col_rename = {
-                    "serial_no": "일련번호", "case_code": "사례코드", "student_id": "학번",
-                    "name": "이름", "track": "계열",
-                    "grade_similarity": "내신 유사도", "mock_similarity": "모의 유사도",
-                    "total_similarity": "통합 유사도",
-                    "all_grade": "전교과 등급", "ksy_grade": "국수영 등급",
-                    "kor_grade": "국어 등급", "math_grade": "수학 등급", "eng_grade": "영어 등급",
-                    "mock_kor_percentile": "모의 국어 백분위", "mock_math_percentile": "모의 수학 백분위",
-                    "mock_eng_grade": "모의 영어 등급", "mock_ks_percentile": "모의 국수 종합지표",
-                    "susi_summary": "수시 결과 요약", "jungsi_summary": "정시 결과 요약",
-                }
-                display_df = display_df.rename(columns={k: v for k, v in col_rename.items() if k in display_df.columns})
-                if "학번" in display_df.columns:
-                    display_df["학번"] = display_df["학번"].apply(clean_display_id)
-                styled_dataframe(display_df)
-            else:
-                st.info("표시할 유사 사례가 없습니다.")
+            render_case_cards(mock_sim_top, susi_df_cur, jungsi_df_cur,
+                              sim_col="mock_similarity", show_adm_detail=_case_adm_detail)
+            _mock_show_full = st.toggle("🔓 학번·이름 보기", value=False, key="analysis_show_full_mock")
+            st.session_state["_analysis_show_full"] = _mock_show_full
+            with st.expander("교사용 상세 보기"):
+                _render_teacher_table(mock_sim_top, "mock_similarity")
 
     with main_tab2:
-        render_passing_tab(top_cases_result, susi_df_cur, jungsi_df_cur)
+        render_passing_tab(
+            top_cases_result, susi_df_cur, jungsi_df_cur,
+            current_features=current,
+            graduates_df=st.session_state.get("graduate_features", pd.DataFrame()),
+        )
 
     section_header("🎯 전형 적합도")
     fit_scores = result["fit_result"].get("scores", [])
@@ -1707,6 +2022,8 @@ if result:
         with st.expander("전형 적합도 표 보기"):
             styled_dataframe(view)
 
+        _fit_show_full = st.toggle("🔓 학번·이름 보기", value=False, key="fit_show_full")
+        st.session_state["_fit_show_full"] = _fit_show_full
         with st.expander("전형 유형별 실제 사례 보기"):
             render_fit_case_details(top_cases_result, susi_df_cur, jungsi_df_cur)
     else:
@@ -1947,12 +2264,14 @@ if result:
                 return d
 
             base_cols = [c for c in ["source", "student_id", "name", "college", "department",
-                                      "admission_name", "first_result", "final_result", "registered"]
+                                      "admission_name", "admission_method", "minimum_requirement",
+                                      "first_result", "final_result", "registered"]
                          if c in cases_df.columns]
 
             col_rename_tr = {
                 "source": "구분", "student_id": "학번", "name": "이름",
                 "college": "대학", "department": "모집단위", "admission_name": "전형명",
+                "admission_method": "전형방법", "minimum_requirement": "최저학력기준",
                 "first_result": "1차결과", "final_result": "최종결과", "registered": "등록",
                 "all_grade": "전교과 등급", "ksy_grade": "국수영 등급",
                 "kor_grade": "국어 등급", "math_grade": "수학 등급", "eng_grade": "영어 등급",
@@ -2297,11 +2616,14 @@ if result:
                 fm_ = cases_df["final_result"].astype(str).apply(is_fail) if "final_result" in cases_df.columns else pd.Series([False] * len(cases_df), index=cases_df.index)
                 pass_e = _merge_scores(cases_df[pm_].copy(), badge=False)
                 fail_e = _merge_scores(cases_df[fm_].copy(), badge=False) if fm_.sum() > 0 else pd.DataFrame()
+                # department/admission_name은 list일 수 있음 (multiselect)
+                _dept_str = " · ".join(department) if isinstance(department, list) else (department or "")
+                _adm_str  = " · ".join(admission_name) if isinstance(admission_name, list) else (admission_name or "")
                 entry = {
-                    "title":          " · ".join(college_list) + (f" / {department}" if department else "") + (f" [{admission_name}]" if admission_name else ""),
+                    "title":          " · ".join(college_list) + (f" / {_dept_str}" if _dept_str else "") + (f" [{_adm_str}]" if _adm_str else ""),
                     "colleges":       list(college_list),
-                    "department":     department,
-                    "admission_name": admission_name,
+                    "department":     _dept_str,
+                    "admission_name": _adm_str,
                     "pass_count":     int(pm_.sum()),
                     "fail_count":     int(fm_.sum()),
                 }
@@ -2328,10 +2650,13 @@ if result:
                               help="최대 3개까지 추가 가능합니다. 먼저 기존 항목을 제거해주세요.")
                 else:
                     if st.button("📌 보고서에 추가", key="tracker_pin", type="primary"):
-                        _new_entry       = _compute_pinned_stats()
-                        _new_entry["_key"] = _pin_key
-                        st.session_state["report_pinned_entries"].append(_new_entry)
-                        st.rerun()
+                        try:
+                            _new_entry = _compute_pinned_stats()
+                            _new_entry["_key"] = _pin_key
+                            st.session_state["report_pinned_entries"].append(_new_entry)
+                            st.rerun()
+                        except Exception as _pin_err:
+                            st.error(f"보고서 추가 중 오류: {_pin_err}")
             with _pcol2:
                 if _pinned:
                     _plist = " / ".join(f"[{i+1}] {e['title'][:18]}{'…' if len(e['title']) > 18 else ''}" for i, e in enumerate(_pinned))
@@ -2515,15 +2840,37 @@ if result:
     st.markdown("")
 
     section_header("📄 보고서 저장")
-    pdf_path = st.session_state.get("report_pdf_path")
-    if pdf_path:
-        with open(pdf_path, "rb") as f:
-            st.download_button(
-                "학생용 PDF 저장",
-                data=f,
-                file_name=Path(pdf_path).name,
-                mime="application/pdf",
+    _ctx_base = st.session_state.get("report_context_base")
+    if _ctx_base:
+        _pinned_count = len(st.session_state.get("report_pinned_entries", []))
+        _last_pinned_count = st.session_state.get("_last_pdf_pinned_count", -1)
+        # pinned 개수 변화 또는 최초 생성 시에만 PDF 재생성
+        if _last_pinned_count != _pinned_count:
+            _pinned_now = st.session_state.get("report_pinned_entries", [])
+            _ctx_fresh = build_report_context(
+                **_ctx_base,
+                pinned_entries=_pinned_now,
             )
+            try:
+                _pdf_path_fresh = export_pdf(_ctx_fresh)
+                st.session_state["report_pdf_path"]        = _pdf_path_fresh
+                st.session_state["_last_pdf_pinned_count"] = _pinned_count
+            except Exception as _e:
+                st.error(f"PDF 생성 오류: {_e}")
+
+        _pdf_path = st.session_state.get("report_pdf_path")
+        if _pdf_path:
+            try:
+                with open(_pdf_path, "rb") as _f:
+                    _pdf_bytes = _f.read()
+                st.download_button(
+                    "학생용 PDF 저장",
+                    data=_pdf_bytes,
+                    file_name=Path(_pdf_path).name,
+                    mime="application/pdf",
+                )
+            except Exception:
+                st.warning("PDF 파일을 찾을 수 없습니다. 분석을 다시 실행해주세요.")
 
     st.caption("본 보고서는 9등급제와 5등급제의 차이를 단순 환산하지 않고, 본교 학생들의 학교 내부 상대 위치와 실제 졸업생 입시 결과를 바탕으로 비교·분석한 참고용 자료입니다.")
     st.caption("본 결과는 진학 상담 지원을 위한 예측 자료로서 실제 전형 결과와 차이가 있을 수 있으며, 상담 자료로만 활용합니다.")
