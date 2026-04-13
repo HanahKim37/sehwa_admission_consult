@@ -687,11 +687,12 @@ def build_passing_analysis(
     jungsi_df: pd.DataFrame,
     current_features=None,
     graduates_df=None,
+    all_sim_df=None,
 ) -> dict:
     """
     상위 유사 사례들의 실제 합격/등록 결과를 분석.
-    - 적정권: 현재 학생과 유사도가 높은 졸업생 합격 사례
-    - 안정권: 현재 학생보다 성적이 살짝 낮은 졸업생 합격 사례
+    - 유사 학생(적정권): 현재 학생과 유사도가 높은 졸업생 합격 사례
+    - 인접 구간(안정권): 현재 학생보다 성적이 살짝 낮은 졸업생 합격 사례
     """
     empty = {"susi": pd.DataFrame(), "jungsi": pd.DataFrame(),
              "susi_below": pd.DataFrame(), "jungsi_below": pd.DataFrame()}
@@ -797,11 +798,21 @@ def build_passing_analysis(
         below_ids = set(below_rows["_sid"].tolist())
 
         if below_ids:
+            # 전체 유사도 조회용 맵 (all_sim_df 활용)
+            full_sim_lookup: dict = {}
+            if all_sim_df is not None and not all_sim_df.empty and "student_id" in all_sim_df.columns:
+                for _, _sr in all_sim_df.iterrows():
+                    _fsid = str(_sr.get("student_id", "")).replace(".0", "").strip()
+                    full_sim_lookup[_fsid] = float(_sr.get("total_similarity", 0) or 0)
+
+            _ALPHA26 = 'abcdefghijklmnopqrstuvwxyz'
             name_map = {}
             for _bidx, (_, r) in enumerate(below_rows.drop_duplicates("_sid").iterrows()):
                 sid = r["_sid"]
+                _label = (_ALPHA26[_bidx] if _bidx < 26
+                          else _ALPHA26[_bidx // 26 - 1] + _ALPHA26[_bidx % 26])
                 name_map[sid] = {
-                    "case_code": f"사례{chr(ord('a') + _bidx)}",
+                    "case_code": f"사례{_label}",
                     "student_id": sid,
                     "name": safe_str(r.get("name", "")),
                 }
@@ -818,8 +829,12 @@ def build_passing_analysis(
             )
             if not susi_below.empty:
                 susi_below["구분"] = "안정권"
+                susi_below["유사도"] = susi_below["학번"].map(
+                    lambda x: round(full_sim_lookup.get(str(x).replace(".0", "").strip(), 0), 1))
             if not jungsi_below.empty:
                 jungsi_below["구분"] = "안정권"
+                jungsi_below["유사도"] = jungsi_below["학번"].map(
+                    lambda x: round(full_sim_lookup.get(str(x).replace(".0", "").strip(), 0), 1))
 
     return {
         "susi": susi_out,
@@ -877,11 +892,13 @@ def render_passing_tab(
     jungsi_df: pd.DataFrame,
     current_features=None,
     graduates_df=None,
+    all_sim_df=None,
 ):
     passing = build_passing_analysis(
         top_cases, susi_df, jungsi_df,
         current_features=current_features,
         graduates_df=graduates_df,
+        all_sim_df=all_sim_df,
     )
     susi_p       = passing["susi"]
     jungsi_p     = passing["jungsi"]
@@ -899,8 +916,8 @@ def render_passing_tab(
         """
         <div style="background:#f8fafc;border:1px solid #cbd5e1;border-radius:12px;padding:14px 18px;margin-bottom:14px;font-size:13px;">
         <b>읽는 방법</b><br>
-        🟢 <b>적정권</b>: 현재 학생과 성적이 유사한 졸업생들이 합격한 사례입니다.<br>
-        🔵 <b>안정권</b>: 현재 학생보다 성적이 살짝 낮은 졸업생들도 합격한 사례입니다 — 현재 학생에게 더 유리한 참고 정보입니다.<br>
+        🟢 <b>유사 학생</b>: 현재 학생과 성적이 유사한 졸업생들이 합격한 사례입니다.<br>
+        🔵 <b>인접 구간</b>: 현재 학생보다 성적이 살짝 낮은 졸업생들도 합격한 사례입니다 — 현재 학생에게 더 유리한 참고 정보입니다.<br>
         본 결과는 상담 참고용이며 실제 합격을 보장하지 않습니다.
         </div>
         """,
@@ -910,6 +927,10 @@ def render_passing_tab(
     BADGE = {
         "적정권": ("#dcfce7", "#166534"),   # 초록
         "안정권": ("#dbeafe", "#1e40af"),   # 파랑
+    }
+    DISPLAY_LABEL = {
+        "적정권": "유사 학생",
+        "안정권": "인접 구간",
     }
 
     def _collect_codes(s_df, j_df):
@@ -963,7 +984,7 @@ def render_passing_tab(
                         st.caption(f"유사도 {sim:.1f}%")
                     st.markdown(
                         f"<span style='background:{badge_bg};color:{badge_color};border-radius:5px;"
-                        f"padding:2px 10px;font-size:12px;font-weight:700;'>{category}</span>",
+                        f"padding:2px 10px;font-size:12px;font-weight:700;'>{DISPLAY_LABEL.get(category, category)}</span>",
                         unsafe_allow_html=True,
                     )
                 with right:
@@ -983,25 +1004,25 @@ def render_passing_tab(
                         st.markdown(_passing_card_html(case_jungsi, show_gun=True,
                                                        show_adm_detail=_show_adm_detail), unsafe_allow_html=True)
 
-    # ── 적정권 섹션 ───────────────────────────────────────────────────────────
+    # ── 유사 학생 섹션 ────────────────────────────────────────────────────────
     if has_similar:
         st.markdown(
             "<div style='background:#f0fdf4;border-left:4px solid #22c55e;"
             "border-radius:6px;padding:8px 14px;margin:12px 0 10px 0;"
-            "font-weight:700;color:#166534;font-size:14px;'>🟢 적정권 — 유사 학생 합격 사례</div>",
+            "font-weight:700;color:#166534;font-size:14px;'>🟢 유사 학생 합격 사례</div>",
             unsafe_allow_html=True,
         )
         _render_cards(susi_p, jungsi_p, show_sim=True)
 
-    # ── 안정권 섹션 ───────────────────────────────────────────────────────────
+    # ── 인접 구간 섹션 ────────────────────────────────────────────────────────
     if has_below:
         st.markdown(
             "<div style='background:#eff6ff;border-left:4px solid #3b82f6;"
             "border-radius:6px;padding:8px 14px;margin:20px 0 10px 0;"
-            "font-weight:700;color:#1e40af;font-size:14px;'>🔵 안정권 — 성적 하위 학생 합격 사례</div>",
+            "font-weight:700;color:#1e40af;font-size:14px;'>🔵 인접 구간 합격 사례</div>",
             unsafe_allow_html=True,
         )
-        _render_cards(susi_below, jungsi_below, show_sim=False)
+        _render_cards(susi_below, jungsi_below, show_sim=True)
 
     # ── 교사용 상세 보기 ──────────────────────────────────────────────────────
     _serial_pass = {}
@@ -1032,8 +1053,8 @@ def render_passing_tab(
         # 구분 뱃지 이모지
         def _fmt_cat(v):
             s = str(v)
-            if s == "적정권": return "🟢 적정권"
-            if s == "안정권": return "🔵 안정권"
+            if s == "적정권": return "🟢 유사 학생"
+            if s == "안정권": return "🔵 인접 구간"
             return s
         if "구분" in combined.columns:
             combined["구분"] = combined["구분"].apply(_fmt_cat)
@@ -1360,7 +1381,7 @@ def build_counseling_data(current: dict, top_cases, susi_df, jungsi_df) -> dict:
     grade_label = trend_map.get(grade_trend, '판단불가')
     mock_label  = trend_map.get(mock_trend,  '판단불가')
     grade_comment = {'상승': '3학년 성적이 쌓일수록 교과/종합형 경쟁력 향상 기대',
-                     '하락': '현재 성적 기준 보수적 접근 필요, 안정권 우선 검토',
+                     '하락': '현재 성적 기준 보수적 접근 필요, 인접 구간 우선 검토',
                      '유지': '현재 수준 기준 그대로 전략 수립 가능'}.get(grade_trend, '데이터 부족으로 판단 어려움')
     mock_comment  = {'상승': '정시 가능성이 시간이 갈수록 높아질 수 있음',
                      '하락': '정시 전략 수립 시 최근 점수 기준으로 보수적 판단 필요',
@@ -1519,7 +1540,7 @@ def render_counseling_summary(
 
     grade_comment = {
         "상승": "3학년 성적이 쌓일수록 교과/종합형 경쟁력 향상 기대",
-        "하락": "현재 성적 기준 보수적 접근 필요, 안정권 우선 검토",
+        "하락": "현재 성적 기준 보수적 접근 필요, 인접 구간 우선 검토",
         "유지": "현재 수준 기준 그대로 전략 수립 가능",
     }.get(grade_trend, "데이터 부족으로 판단 어려움")
 
@@ -1730,7 +1751,7 @@ if st.button("분석 실행", type="primary"):
     grade_report_cases = _build_report_cases(grade_sim,  "grade_similarity")
     mock_report_cases  = _build_report_cases(mock_sim,   "mock_similarity")
 
-    # 합격 안정권에도 성적 컬럼 병합
+    # 합격 사례에도 성적 컬럼 병합
     passing_data   = build_passing_analysis(top_cases, susi_df, jungsi_df, current_features=current, graduates_df=graduates)
     passing_susi   = passing_data["susi"].to_dict("records")   if not passing_data["susi"].empty   else []
     passing_jungsi = passing_data["jungsi"].to_dict("records") if not passing_data["jungsi"].empty else []
@@ -1872,12 +1893,12 @@ if result:
         border="#fdba74",
     )
 
-    section_header("👥 유사 사례 / 합격 안정권 분석")
+    section_header("👥 유사 사례 / 합격 사례 분석")
     top_cases_result = result.get("top_cases", pd.DataFrame())
     susi_df_cur = graduate_db.get("susi", pd.DataFrame())
     jungsi_df_cur = graduate_db.get("jungsi", pd.DataFrame())
 
-    main_tab1, main_tab2 = st.tabs(["유사 사례", "합격 안정권 분석"])
+    main_tab1, main_tab2 = st.tabs(["유사 사례", "합격 사례 분석"])
 
     with main_tab1:
         _case_adm_detail = st.toggle("📋 전형방법·최저학력기준 보기", value=False, key="case_adm_detail")
@@ -1967,6 +1988,7 @@ if result:
             top_cases_result, susi_df_cur, jungsi_df_cur,
             current_features=current,
             graduates_df=st.session_state.get("graduate_features", pd.DataFrame()),
+            all_sim_df=result.get("total_sim", pd.DataFrame()),
         )
 
     section_header("🎯 전형 적합도")

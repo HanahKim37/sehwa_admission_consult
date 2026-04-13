@@ -513,8 +513,8 @@ def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict])
     sorted_codes = sorted(case_map,
                           key=lambda c: cat_order.get(case_map[c]["cat"], 9))
 
-    # 카테고리별 그룹 분리: 안정권 / 적정권 / 참고
-    CAT_LABEL = {"안정권": "안정권", "적정권": "적정권", "참고": "참고"}
+    # 카테고리별 그룹 분리: 안정권(인접 구간) / 적정권(유사 학생) / 참고
+    CAT_LABEL = {"안정권": "인접 구간", "적정권": "유사 학생", "참고": "참고"}
     CAT_HDR_BG = {
         "안정권": colors.HexColor("#A7F3D0"),  # 연초록
         "적정권": colors.HexColor("#BFDBFE"),  # 연파랑
@@ -574,7 +574,7 @@ def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict])
         cat = case_map[code]["cat"]
         cat_groups.setdefault(cat, []).append(code)
 
-    blocks: list = [*_sec("합격 안정권 분석", line_color=CG), Spacer(1, 4)]
+    blocks: list = [*_sec("합격 사례 분석", line_color=CG), Spacer(1, 4)]
     for cat in ["안정권", "적정권", "참고"]:
         codes_in_cat = cat_groups.get(cat, [])
         if not codes_in_cat:
@@ -866,7 +866,7 @@ def export_pdf(context: dict, output_path: str | None = None) -> str:
         story.append(Spacer(1, 4))
 
     # ══════════════════════════════════════════════════
-    # 3. 합격 안정권 분석
+    # 3. 합격 사례 분석
     # ══════════════════════════════════════════════════
     story.extend(_build_passing_section(
         context.get("passing_susi",   []),
