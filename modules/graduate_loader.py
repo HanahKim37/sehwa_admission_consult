@@ -1,4 +1,5 @@
 from __future__ import annotations
+from io import BytesIO
 from typing import BinaryIO
 import pandas as pd
 
@@ -47,3 +48,28 @@ def summarize_workbook(workbook_dict: dict[str, pd.DataFrame]) -> dict[str, int]
     for name, df in workbook_dict.items():
         summary[name] = len(df)
     return summary
+
+
+def load_from_google_drive() -> dict[str, pd.DataFrame]:
+    """Streamlit Secrets의 서비스 계정으로 Google Drive에서 기본 졸업생 엑셀을 로드합니다."""
+    import streamlit as st
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    from googleapiclient.http import MediaIoBaseDownload
+
+    credentials = service_account.Credentials.from_service_account_info(
+        st.secrets["gcp_service_account"],
+        scopes=["https://www.googleapis.com/auth/drive.readonly"],
+    )
+    service = build("drive", "v3", credentials=credentials)
+    file_id = st.secrets["GRAD_FILE_ID"]
+
+    request = service.files().get_media(fileId=file_id)
+    buffer = BytesIO()
+    downloader = MediaIoBaseDownload(buffer, request)
+    done = False
+    while not done:
+        _, done = downloader.next_chunk()
+
+    buffer.seek(0)
+    return load_excel_file(buffer)

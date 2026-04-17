@@ -1,7 +1,7 @@
 from modules.auth import require_login, render_logout_button
 import streamlit as st
 import pandas as pd
-from modules.graduate_loader import load_excel_file, detect_required_sheets, summarize_workbook
+from modules.graduate_loader import load_excel_file, load_from_google_drive, detect_required_sheets, summarize_workbook
 from modules.graduate_normalizer import build_graduate_database, _fill_multiindex_ffill, _flatten_columns
 from modules.ui_helpers import render_status_badge, render_summary_card
 
@@ -10,22 +10,50 @@ render_logout_button()
 
 st.title("📂 졸업생 데이터 불러오기")
 
-uploaded = st.file_uploader("졸업생 엑셀 파일 업로드", type=["xlsx", "xlsm", "xls"])
-if uploaded is not None:
-    if st.button("데이터 불러오기", type="primary"):
-        with st.spinner("엑셀 파일을 분석하는 중입니다..."):
-            workbook = load_excel_file(uploaded)
-            detected = detect_required_sheets(workbook)
-            summary = summarize_workbook(workbook)
-            db = build_graduate_database(workbook)
+tab_default, tab_upload = st.tabs(["기본 데이터 사용", "파일 직접 업로드"])
 
-            st.session_state["graduate_raw_sheets"] = workbook
-            st.session_state["graduate_db"] = db
-            st.session_state["graduate_summary"] = {"detected": detected, "summary": summary}
-            st.session_state["graduates_loaded"] = True
+# ── 기본 데이터 탭 (Google Drive) ──────────────────────────────────────────────
+with tab_default:
+    st.info("사전에 등록된 졸업생 데이터를 불러옵니다. 별도 파일 업로드 없이 바로 사용할 수 있습니다.")
 
-        st.success("졸업생 데이터 로딩이 완료되었습니다.")
+    if st.button("기본 데이터 불러오기", type="primary", key="btn_default"):
+        with st.spinner("졸업생 데이터를 불러오는 중입니다..."):
+            try:
+                workbook = load_from_google_drive()
+                detected = detect_required_sheets(workbook)
+                summary = summarize_workbook(workbook)
+                db = build_graduate_database(workbook)
 
+                st.session_state["graduate_raw_sheets"] = workbook
+                st.session_state["graduate_db"] = db
+                st.session_state["graduate_summary"] = {"detected": detected, "summary": summary}
+                st.session_state["graduates_loaded"] = True
+
+                st.success("기본 졸업생 데이터 로딩이 완료되었습니다.")
+            except Exception as e:
+                st.error(f"데이터 로딩 중 오류가 발생했습니다: {e}")
+
+# ── 파일 직접 업로드 탭 ────────────────────────────────────────────────────────
+with tab_upload:
+    st.info("직접 준비한 졸업생 엑셀 파일을 업로드합니다.")
+
+    uploaded = st.file_uploader("졸업생 엑셀 파일 업로드", type=["xlsx", "xlsm", "xls"], key="uploader_grad")
+    if uploaded is not None:
+        if st.button("데이터 불러오기", type="primary", key="btn_upload"):
+            with st.spinner("엑셀 파일을 분석하는 중입니다..."):
+                workbook = load_excel_file(uploaded)
+                detected = detect_required_sheets(workbook)
+                summary = summarize_workbook(workbook)
+                db = build_graduate_database(workbook)
+
+                st.session_state["graduate_raw_sheets"] = workbook
+                st.session_state["graduate_db"] = db
+                st.session_state["graduate_summary"] = {"detected": detected, "summary": summary}
+                st.session_state["graduates_loaded"] = True
+
+            st.success("졸업생 데이터 로딩이 완료되었습니다.")
+
+# ── 로딩 결과 표시 (공통) ──────────────────────────────────────────────────────
 if st.session_state.get("graduates_loaded"):
     info = st.session_state["graduate_summary"]
     st.subheader("시트 인식 결과")
@@ -93,7 +121,6 @@ if st.session_state.get("graduates_loaded"):
         st.markdown("---")
         st.markdown("### 🔬 모의고사 감지 컬럼 (한국사·탐구 디버깅용)")
 
-        # detected_mock_cols: attrs 또는 db 키에서 조회
         detected_cols = (
             mock_df.attrs.get("detected_mock_cols")
             or db.get("mock_detected_cols")
@@ -108,7 +135,6 @@ if st.session_state.get("graduates_loaded"):
         else:
             st.warning("detected_mock_cols 정보 없음 (attrs 미보존). 아래 원본 컬럼 목록 참고.")
 
-        # 원본 모의고사 시트 컬럼 전체 표시 (flatten 후)
         workbook = st.session_state.get("graduate_raw_sheets", {})
         raw_mock = workbook.get("모의고사")
         if raw_mock is not None:

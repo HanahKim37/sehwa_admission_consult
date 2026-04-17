@@ -35,7 +35,7 @@ def 홈():
     )
 
 pg = st.navigation([
-    st.Page(홈, title="홈", icon="🏠"),
+    st.Page(홈, title="HOME", icon="🏠"),
     st.Page("pages/2_졸업생_데이터_불러오기.py", title="졸업생 데이터 불러오기"),
     st.Page("pages/3_상담자료_업로드_및_추출.py", title="상담자료 업로드 및 추출"),
     st.Page("pages/4_추출결과_확인수정.py", title="추출결과 확인수정"),
