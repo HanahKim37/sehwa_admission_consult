@@ -2875,24 +2875,42 @@ if result:
             )
             try:
                 _pdf_path_fresh = export_pdf(_ctx_fresh)
+                _pdf_deploy_fresh = export_pdf(_ctx_fresh, deploy=True)
                 st.session_state["report_pdf_path"]        = _pdf_path_fresh
+                st.session_state["report_pdf_deploy_path"] = _pdf_deploy_fresh
                 st.session_state["_last_pdf_pinned_count"] = _pinned_count
             except Exception as _e:
                 st.error(f"PDF 생성 오류: {_e}")
 
-        _pdf_path = st.session_state.get("report_pdf_path")
-        if _pdf_path:
-            try:
-                with open(_pdf_path, "rb") as _f:
-                    _pdf_bytes = _f.read()
-                st.download_button(
-                    "학생용 PDF 저장",
-                    data=_pdf_bytes,
-                    file_name=Path(_pdf_path).name,
-                    mime="application/pdf",
-                )
-            except Exception:
-                st.warning("PDF 파일을 찾을 수 없습니다. 분석을 다시 실행해주세요.")
+        _pdf_path        = st.session_state.get("report_pdf_path")
+        _pdf_deploy_path = st.session_state.get("report_pdf_deploy_path")
+        _btn_col1, _btn_col2 = st.columns(2)
+        with _btn_col1:
+            if _pdf_path:
+                try:
+                    with open(_pdf_path, "rb") as _f:
+                        _pdf_bytes = _f.read()
+                    st.download_button(
+                        "학생용 PDF 저장",
+                        data=_pdf_bytes,
+                        file_name=Path(_pdf_path).name,
+                        mime="application/pdf",
+                    )
+                except Exception:
+                    st.warning("PDF 파일을 찾을 수 없습니다. 분석을 다시 실행해주세요.")
+        with _btn_col2:
+            if _pdf_deploy_path:
+                try:
+                    with open(_pdf_deploy_path, "rb") as _f:
+                        _pdf_deploy_bytes = _f.read()
+                    st.download_button(
+                        "학생 PDF 보고서 생성(배포용)",
+                        data=_pdf_deploy_bytes,
+                        file_name=Path(_pdf_deploy_path).name,
+                        mime="application/pdf",
+                    )
+                except Exception:
+                    st.warning("배포용 PDF 파일을 찾을 수 없습니다. 분석을 다시 실행해주세요.")
 
     st.caption("본 보고서는 9등급제와 5등급제의 차이를 단순 환산하지 않고, 본교 학생들의 학교 내부 상대 위치와 실제 졸업생 입시 결과를 바탕으로 비교·분석한 참고용 자료입니다.")
     st.caption("본 결과는 진학 상담 지원을 위한 예측 자료로서 실제 전형 결과와 차이가 있을 수 있으며, 상담 자료로만 활용합니다.")

@@ -719,15 +719,16 @@ def _build_pinned_section(pinned: list[dict]) -> list:
 
 
 # ── PDF 내보내기 ─────────────────────────────────────────────────────────
-def export_pdf(context: dict, output_path: str | None = None) -> str:
+def export_pdf(context: dict, output_path: str | None = None, deploy: bool = False) -> str:
     _init_styles()
     stu = context["student"]
 
     if output_path is None:
-        mmdd  = datetime.now().strftime("%m%d")
-        sid   = str(stu.get("student_id", "")).replace(".0", "").strip()
-        name  = str(stu.get("name",       "")).strip()
-        fname = f"{mmdd} {sid} {name}.pdf".strip()
+        mmdd   = datetime.now().strftime("%m%d")
+        sid    = str(stu.get("student_id", "")).replace(".0", "").strip()
+        name   = str(stu.get("name",       "")).strip()
+        suffix = "_배포용" if deploy else ""
+        fname  = f"{mmdd} {sid} {name}{suffix}.pdf".strip()
         output_path = str(OUTPUT_DIR / fname)
 
     doc = SimpleDocTemplate(
@@ -846,6 +847,36 @@ def export_pdf(context: dict, output_path: str | None = None) -> str:
         tbl.setStyle(sty)
         return [tbl, Spacer(1, 8)]
 
+    def _sim_table_deploy(cases: list, header_color) -> list:
+        """배포용 유사사례 — 수시/정시 전체를 각각 한 셀로 합침."""
+        if not cases:
+            return []
+        all_susi: list[str] = []
+        all_jungsi: list[str] = []
+        for row in cases[:8]:
+            s = str(row.get("susi_summary",   "-") or "-").strip()
+            j = str(row.get("jungsi_summary", "-") or "-").strip()
+            if s and s != "-":
+                all_susi.append(_bold_passing(s))
+            if j and j != "-":
+                all_jungsi.append(_bold_passing(j))
+        susi_cell   = "<br/>".join(all_susi)   if all_susi   else "-"
+        jungsi_cell = "<br/>".join(all_jungsi) if all_jungsi else "-"
+        half = _CW / 2
+        tbl = Table(
+            [
+                [_p("수시 결과 요약", "th"), _p("정시 결과 요약", "th")],
+                [_p(susi_cell, "td"),        _p(jungsi_cell, "td")],
+            ],
+            colWidths=[half, half],
+        )
+        sty = _tbl_style(header_bg=header_color)
+        sty.add("BACKGROUND", (0, 1), (-1, 1), CLG)
+        tbl.setStyle(sty)
+        return [tbl, Spacer(1, 8)]
+
+    _sim_fn = _sim_table_deploy if deploy else _sim_table
+
     grade_cases = context.get("grade_similar_cases", [])
     mock_cases  = context.get("mock_similar_cases",  [])
     # 구분 데이터가 없으면 기존 similar_cases 폴백
@@ -858,11 +889,11 @@ def export_pdf(context: dict, output_path: str | None = None) -> str:
         if grade_cases:
             story.append(_p("▶ 내신 유사도 순", "body_b"))
             story.append(Spacer(1, 3))
-            story.extend(_sim_table(grade_cases, colors.HexColor("#BFDBFE")))
+            story.extend(_sim_fn(grade_cases, colors.HexColor("#BFDBFE")))
         if mock_cases:
             story.append(_p("▶ 모의 유사도 순", "body_b"))
             story.append(Spacer(1, 3))
-            story.extend(_sim_table(mock_cases, colors.HexColor("#DDD6FE")))
+            story.extend(_sim_fn(mock_cases, colors.HexColor("#DDD6FE")))
         story.append(Spacer(1, 4))
 
     # ══════════════════════════════════════════════════
