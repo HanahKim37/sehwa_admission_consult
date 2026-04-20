@@ -487,7 +487,7 @@ def render_report_html(context: dict) -> str:
 
 
 # ── 합격 안정권 분석 섹션 ────────────────────────────────────────────────
-def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict]) -> list:
+def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict], deploy: bool = False) -> list:
     if not passing_susi and not passing_jungsi:
         return []
 
@@ -568,11 +568,62 @@ def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict])
         tbl.setStyle(sty)
         return tbl
 
+    def _make_cat_table_deploy(codes_for_cat: list) -> Table | None:
+        """배포용: 사례코드 없이, 성적/수시/정시를 각각 한 셀로 합침."""
+        if not codes_for_cat:
+            return None
+        grade_lines: list[str] = []
+        all_susi_lines: list[str] = []
+        all_jungsi_lines: list[str] = []
+        for code in codes_for_cat:
+            info  = case_map[code]
+            grade = info["grades"]
+            g_all = _g(grade.get("all_grade"))
+            g_ksy = _g(grade.get("ksy_grade"))
+            g_moc = _pct_short(grade.get("mock_ks_percentile"))
+            grade_lines.append(f"{g_all}/{g_ksy}/{g_moc}")
+            for r in info["susi"]:
+                line = r.get("college", "-")
+                if r.get("department"):
+                    line += f" / {r['department']}"
+                if r.get("admission_name"):
+                    line += f" [{r['admission_name']}]"
+                all_susi_lines.append(line)
+            for r in info["jungsi"]:
+                line = r.get("college", "-")
+                if r.get("department"):
+                    line += f" / {r['department']}"
+                if r.get("gun"):
+                    line += f" ({r['gun']}군)"
+                all_jungsi_lines.append(line)
+        grade_cell   = "<br/>".join(grade_lines)   if grade_lines   else "-"
+        susi_cell    = "<br/>".join(all_susi_lines)  if all_susi_lines  else "-"
+        jungsi_cell  = "<br/>".join(all_jungsi_lines) if all_jungsi_lines else "-"
+        cat_hdr_bg = CAT_HDR_BG.get(case_map[codes_for_cat[0]]["cat"], colors.HexColor("#6EE7B7"))
+        third = _CW / 3
+        tbl = Table(
+            [
+                [_p("성적 (전교과/국수영/모의)", "th_c"),
+                 _p("수시 합격",                "th"),
+                 _p("정시 합격",                "th")],
+                [_p(grade_cell,  "td_c"),
+                 _p(susi_cell,   "td"),
+                 _p(jungsi_cell, "td")],
+            ],
+            colWidths=[third, third, third],
+        )
+        sty = _tbl_style(header_bg=cat_hdr_bg)
+        sty.add("BACKGROUND", (0, 1), (-1, 1), CLG)
+        tbl.setStyle(sty)
+        return tbl
+
     # 카테고리별 코드 묶음
     cat_groups: dict[str, list] = {}
     for code in sorted_codes:
         cat = case_map[code]["cat"]
         cat_groups.setdefault(cat, []).append(code)
+
+    _cat_tbl_fn = _make_cat_table_deploy if deploy else _make_cat_table
 
     blocks: list = [*_sec("합격 사례 분석", line_color=CG), Spacer(1, 4)]
     for cat in ["안정권", "적정권", "참고"]:
@@ -581,7 +632,7 @@ def _build_passing_section(passing_susi: list[dict], passing_jungsi: list[dict])
             continue
         blocks.append(_p(f"▶ {CAT_LABEL[cat]}", "body_b"))
         blocks.append(Spacer(1, 3))
-        tbl = _make_cat_table(codes_in_cat)
+        tbl = _cat_tbl_fn(codes_in_cat)
         if tbl:
             blocks.append(tbl)
         blocks.append(Spacer(1, 8))
@@ -902,6 +953,7 @@ def export_pdf(context: dict, output_path: str | None = None, deploy: bool = Fal
     story.extend(_build_passing_section(
         context.get("passing_susi",   []),
         context.get("passing_jungsi", []),
+        deploy=deploy,
     ))
 
     # ══════════════════════════════════════════════════
