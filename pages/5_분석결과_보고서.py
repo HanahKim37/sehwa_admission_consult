@@ -1829,6 +1829,7 @@ if st.button("분석 실행", type="primary"):
         "mock_sim": mock_sim,
         "total_sim": total_sim,
         "top_cases": top_cases,
+        "top_cases_for_passing": top_cases_for_passing,
         "fit_result": fit_result,
         "strength": strength,
         "weakness": weakness,
@@ -1916,6 +1917,7 @@ if result:
 
     section_header("👥 유사 사례 / 합격 사례 분석")
     top_cases_result = result.get("top_cases", pd.DataFrame())
+    top_cases_for_passing_result = result.get("top_cases_for_passing", top_cases_result)
     susi_df_cur = graduate_db.get("susi", pd.DataFrame())
     jungsi_df_cur = graduate_db.get("jungsi", pd.DataFrame())
 
@@ -2006,7 +2008,7 @@ if result:
 
     with main_tab2:
         render_passing_tab(
-            top_cases_result, susi_df_cur, jungsi_df_cur,
+            top_cases_for_passing_result, susi_df_cur, jungsi_df_cur,
             current_features=current,
             graduates_df=st.session_state.get("graduate_features", pd.DataFrame()),
             all_sim_df=result.get("total_sim", pd.DataFrame()),
