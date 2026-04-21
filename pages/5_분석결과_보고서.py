@@ -1792,6 +1792,7 @@ if st.button("분석 실행", type="primary"):
         counseling_data=counseling_data,
     )
     st.session_state["report_context_base"] = _ctx_base
+    st.session_state["_last_pdf_pinned_count"] = -1  # 새 학생 분석 시 PDF 강제 재생성
 
     context = build_report_context(
         **_ctx_base,
