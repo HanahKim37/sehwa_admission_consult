@@ -127,12 +127,12 @@ with tab1:
             </tr>
             <tr style="border-bottom:1px solid #F3F4F6;">
                 <td style="padding:8px 12px;">사회/탐구 등급</td>
-                <td style="padding:8px 12px;text-align:center;">7%</td>
+                <td style="padding:8px 12px;text-align:center;">10%</td>
                 <td style="padding:8px 12px;color:#6B7280;">데이터 없으면 제외 후 재정규화</td>
             </tr>
             <tr style="border-bottom:1px solid #F3F4F6;background:#FAFAFA;">
                 <td style="padding:8px 12px;">과학/탐구 등급</td>
-                <td style="padding:8px 12px;text-align:center;">7%</td>
+                <td style="padding:8px 12px;text-align:center;">10%</td>
                 <td style="padding:8px 12px;color:#6B7280;">데이터 없으면 제외 후 재정규화</td>
             </tr>
             <tr style="border-bottom:1px solid #F3F4F6;">
@@ -187,7 +187,7 @@ with tab2:
             </tr>
             <tr style="border-bottom:1px solid #F3F4F6;">
                 <td style="padding:8px 12px;">과학/탐구 등급</td>
-                <td style="padding:8px 12px;text-align:center;">8%</td>
+                <td style="padding:8px 12px;text-align:center;">10%</td>
                 <td style="padding:8px 12px;color:#6B7280;">데이터 없으면 제외 후 재정규화</td>
             </tr>
             <tr style="border-bottom:1px solid #F3F4F6;background:#FAFAFA;">
