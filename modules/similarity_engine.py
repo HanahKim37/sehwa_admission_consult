@@ -178,13 +178,14 @@ def calculate_mock_similarity(current: dict, graduates: pd.DataFrame) -> pd.Data
     if has_pct_sum:
         # ── 케이스 1: 4과목 백분위합 기준 ──────────────────────────────────
         # scale=0.30: 합산 차이 100점 ≈ 개별 25점 차이와 동등한 감점
+        # 영어/탐구 scale 30: 1등급 차이 → 70점(기존 82점)으로 패널티 강화
         mock_items = [
             ("mock_ks_pct_sum",     "mock_ks_percentile",  0.30, 0.36),
             ("mock_kor_percentile", "mock_kor_percentile", 1.2,  0.14),
             ("mock_math_percentile","mock_math_percentile",1.2,  0.14),
-            ("mock_eng_grade",      "mock_eng_grade",       18,   0.10),
-            ("mock_soc_grade",      "mock_soc_grade",       18,   0.07),
-            ("mock_sci_grade",      "mock_sci_grade",       18,   0.07),
+            ("mock_eng_grade",      "mock_eng_grade",       30,   0.10),
+            ("mock_soc_grade",      "mock_soc_grade",       30,   0.10),
+            ("mock_sci_grade",      "mock_sci_grade",       30,   0.10),
         ]
     else:
         # ── 케이스 2: 국수 개별 백분위 기준 ─────────────────────────────────
@@ -192,9 +193,9 @@ def calculate_mock_similarity(current: dict, graduates: pd.DataFrame) -> pd.Data
         mock_items = [
             ("mock_kor_percentile", "mock_kor_percentile", 1.2, 0.26),
             ("mock_math_percentile","mock_math_percentile",1.2, 0.30),
-            ("mock_eng_grade",      "mock_eng_grade",       18,  0.14),
-            ("mock_soc_grade",      "mock_soc_grade",       18,  0.10),
-            ("mock_sci_grade",      "mock_sci_grade",       18,  0.08),
+            ("mock_eng_grade",      "mock_eng_grade",       30,  0.14),
+            ("mock_soc_grade",      "mock_soc_grade",       30,  0.10),
+            ("mock_sci_grade",      "mock_sci_grade",       30,  0.10),
         ]
 
     rows = []
