@@ -1751,8 +1751,28 @@ if st.button("분석 실행", type="primary"):
     grade_report_cases = _build_report_cases(grade_sim,  "grade_similarity")
     mock_report_cases  = _build_report_cases(mock_sim,   "mock_similarity")
 
+    # 합격 사례: 유사 사례에 표시된 학생 합집합 기준 (내신 상위 8 + 모의 상위 8)
+    _grade_top_ids = (
+        set(grade_sim.head(8)["student_id"].astype(str)
+            .str.replace(".0", "", regex=False).str.strip().tolist())
+        if not grade_sim.empty and "student_id" in grade_sim.columns else set()
+    )
+    _mock_top_ids = (
+        set(mock_sim.head(8)["student_id"].astype(str)
+            .str.replace(".0", "", regex=False).str.strip().tolist())
+        if not mock_sim.empty and "student_id" in mock_sim.columns else set()
+    )
+    _sim_union_ids = _grade_top_ids | _mock_top_ids
+    if not total_sim.empty and "student_id" in total_sim.columns and _sim_union_ids:
+        _ts_copy = total_sim.copy()
+        _ts_copy["_sid_tmp"] = _ts_copy["student_id"].astype(str).str.replace(".0", "", regex=False).str.strip()
+        _union_sim_df = _ts_copy[_ts_copy["_sid_tmp"].isin(_sim_union_ids)].drop(columns=["_sid_tmp"])
+        top_cases_for_passing = get_top_similar_cases(_union_sim_df, n=len(_sim_union_ids))
+    else:
+        top_cases_for_passing = top_cases
+
     # 합격 사례에도 성적 컬럼 병합
-    passing_data   = build_passing_analysis(top_cases, susi_df, jungsi_df, current_features=current, graduates_df=graduates)
+    passing_data   = build_passing_analysis(top_cases_for_passing, susi_df, jungsi_df, current_features=current, graduates_df=graduates)
     passing_susi   = passing_data["susi"].to_dict("records")   if not passing_data["susi"].empty   else []
     passing_jungsi = passing_data["jungsi"].to_dict("records") if not passing_data["jungsi"].empty else []
     if (passing_susi or passing_jungsi) and not graduates.empty and "student_id" in graduates.columns:
